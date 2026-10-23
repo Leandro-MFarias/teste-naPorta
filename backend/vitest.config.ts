@@ -7,6 +7,7 @@ export default defineConfig({
     include: ['src/**/*.spec.ts'],
     exclude: ['**/*.integration-spec.ts', 'node_modules/**', 'dist/**'],
     environment: 'node',
+    setupFiles: ['test/setup.ts'],
     passWithNoTests: true,
     coverage: {
       provider: 'v8',

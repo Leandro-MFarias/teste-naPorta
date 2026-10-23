@@ -34,14 +34,18 @@ O projeto deve ser **API First**.
 
 ## 3. Tecnologias obrigatórias
 
--   **Runtime:** Node.js LTS.
--   **Framework:** NestJS.
+-   **Runtime:** Node.js LTS (24 ou superior).
+-   **Framework:** NestJS 12.
 -   **Linguagem:** TypeScript com modo estrito habilitado.
+-   **Sistema de módulos:** ESM (`"type": "module"` no `package.json`,
+    `module`/`moduleResolution` como `nodenext` no `tsconfig.json`).
+    Imports relativos devem usar a extensão `.js`
+    (ex.: `import { AppModule } from './app.module.js'`).
 -   **Banco de dados:** PostgreSQL.
 -   **ORM:** Prisma.
 -   **Autenticação:** JWT Bearer.
 -   **Hash de senha:** bcrypt ou biblioteca equivalente segura.
--   **Testes:** Jest.
+-   **Testes:** Vitest (ver seção 17).
 -   **Validação:** `class-validator` e `class-transformer`, integrados
     ao NestJS.
 -   **Documentação:** Swagger/OpenAPI com `@nestjs/swagger`.
@@ -699,8 +703,28 @@ Configurar documentação automática em `/api/docs`.
 
 ## 17. Testes automatizados
 
-Usar Jest. **Não criar testes E2E nesta etapa.** O escopo inclui testes
-unitários e testes de integração.
+Usar Vitest. **Não criar testes E2E nesta etapa.** O escopo inclui
+testes unitários e testes de integração.
+
+O NestJS 12 é distribuído apenas como ESM. O Jest só executa ESM com a
+flag experimental `--experimental-vm-modules` do Node e exige APIs
+instáveis para mock de módulos (`jest.unstable_mockModule`). Por isso o
+projeto usa o Vitest, que suporta ESM nativamente e é o runner adotado
+pelo template oficial do NestJS 12. A API é equivalente à do Jest
+(`describe`, `it`, `expect`, `vi.fn()`, `vi.spyOn()`).
+
+Convenções:
+
+-   Importar as funções de teste explicitamente de `vitest`
+    (`import { describe, expect, it, vi } from 'vitest'`); não usar
+    globals.
+-   Testes unitários: arquivos `*.spec.ts` dentro de `src/`, ao lado do
+    código testado. Configuração em `vitest.config.ts`.
+-   Testes de integração: arquivos `*.integration-spec.ts` em `src/` ou
+    `test/`. Configuração em `vitest.config.integration.ts`, executados
+    em série por compartilharem o banco de teste.
+-   Usar `Test.createTestingModule` do `@nestjs/testing` para montar os
+    módulos e substituir dependências por mocks.
 
 ### 17.1 Testes unitários
 
@@ -790,10 +814,12 @@ Criar scripts claros e documentados, incluindo equivalentes para:
 -   `build`
 -   `lint`
 -   `format`
--   `test` --- testes unitários
--   `test:watch`
--   `test:cov`
+-   `test` --- testes unitários (`vitest run`)
+-   `test:watch` --- testes unitários em modo watch (`vitest`)
+-   `test:cov` --- testes unitários com cobertura
+    (`vitest run --coverage`)
 -   `test:integration` --- testes de integração
+    (`vitest run --config vitest.config.integration.ts`)
 -   `prisma:generate`
 -   `prisma:migrate`
 -   `prisma:seed`
@@ -834,7 +860,8 @@ Não documentar comportamento que não esteja implementado.
 Executar em etapas pequenas, verificando build, lint e testes a cada
 etapa:
 
-1.  Inicializar NestJS, TypeScript estrito, ESLint, Prettier e scripts.
+1.  Inicializar NestJS 12 em ESM, TypeScript estrito, ESLint, Prettier,
+    Vitest e scripts.
 2.  Configurar variáveis de ambiente e validação de configuração.
 3.  Configurar PostgreSQL, Docker Compose, Prisma e migrations.
 4.  Criar os modelos e relacionamentos de User, Customer, Order e

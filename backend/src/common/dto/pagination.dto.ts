@@ -4,6 +4,8 @@ import { IsInt, IsOptional, Max, Min } from 'class-validator';
 import type { PaginationMeta } from '../interfaces/api-response.interface.js';
 
 export const DEFAULT_PAGE = 1;
+/** Evita offsets que estourariam o Prisma/banco (ex.: page=1e20). */
+export const MAX_PAGE = 1_000_000;
 export const DEFAULT_LIMIT = 10;
 export const MAX_LIMIT = 100;
 
@@ -11,12 +13,14 @@ export class PaginationQueryDto {
   @ApiPropertyOptional({
     description: 'Página, começando em 1.',
     minimum: 1,
+    maximum: MAX_PAGE,
     default: DEFAULT_PAGE,
   })
   @IsOptional()
   @Type(() => Number)
   @IsInt({ message: 'page deve ser um número inteiro' })
   @Min(1, { message: 'page deve ser maior ou igual a 1' })
+  @Max(MAX_PAGE, { message: `page deve ser no máximo ${MAX_PAGE}` })
   page: number = DEFAULT_PAGE;
 
   @ApiPropertyOptional({

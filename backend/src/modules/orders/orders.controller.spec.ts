@@ -17,7 +17,10 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../../common/guards/roles.guard.js';
 import type { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
-import type { CreateOrderRequest } from './interfaces/order-request.interface.js';
+import type {
+  CreateOrderRequest,
+  ListOrdersQuery,
+} from './interfaces/order-request.interface.js';
 import { OrdersController } from './orders.controller.js';
 import { OrdersService } from './orders.service.js';
 
@@ -118,5 +121,108 @@ describe('POST /orders', () => {
       ]) as unknown,
     });
     expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /orders', () => {
+  const findAll = vi.fn<(query: ListOrdersQuery) => Promise<unknown>>();
+  const findUnique = vi.fn(() =>
+    Promise.resolve({ id: USER_ID, role: 'USER', isActive: true }),
+  );
+  let app: INestApplication;
+  let baseUrl: string;
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      controllers: [OrdersController],
+      providers: [
+        { provide: OrdersService, useValue: { findAll } },
+        { provide: JwtService, useValue: testJwtService },
+        { provide: PrismaService, useValue: { user: { findUnique } } },
+        { provide: APP_GUARD, useClass: JwtAuthGuard },
+        { provide: APP_GUARD, useClass: RolesGuard },
+      ],
+    }).compile();
+
+    app = moduleRef.createNestApplication({ logger: false });
+    configureApp(app);
+    await app.listen(0);
+    baseUrl = await app.getUrl();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(() => {
+    findAll.mockReset().mockResolvedValue({
+      data: [],
+      meta: { total: 0, page: 1, limit: 10, totalPages: 0 },
+    });
+  });
+
+  async function get(query: string, authenticated = true) {
+    const headers: Record<string, string> = {};
+    if (authenticated) {
+      const token = await testJwtService.signAsync({
+        sub: USER_ID,
+        role: 'USER',
+      });
+      headers.authorization = `Bearer ${token}`;
+    }
+    const res = await fetch(`${baseUrl}/orders${query}`, { headers });
+    return { status: res.status, body: (await res.json()) as unknown };
+  }
+
+  it('retorna 401 sem token', async () => {
+    const res = await get('', false);
+
+    expect(res.status).toBe(401);
+    expect(findAll).not.toHaveBeenCalled();
+  });
+
+  it('aplica padrões de paginação e retorna lista vazia com meta', async () => {
+    const res = await get('');
+
+    expect(res).toEqual({
+      status: 200,
+      body: {
+        data: [],
+        meta: { total: 0, page: 1, limit: 10, totalPages: 0 },
+      },
+    });
+    expect(findAll).toHaveBeenCalledWith({ page: 1, limit: 10 });
+  });
+
+  it('converte e repassa os filtros', async () => {
+    await get(
+      '?page=2&limit=5&status=DELIVERED&orderNumber=%20PED%20&startDate=2026-10-01&endDate=2026-10-31',
+    );
+
+    expect(findAll).toHaveBeenCalledWith({
+      page: 2,
+      limit: 5,
+      status: 'DELIVERED',
+      orderNumber: 'PED',
+      startDate: '2026-10-01',
+      endDate: '2026-10-31',
+    });
+  });
+
+  it('retorna 400 sem chamar o serviço para query inválida', async () => {
+    const res = await get(
+      '?page=0&limit=1000&startDate=2026-10-10&endDate=2026-10-09&status=LOST',
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({
+      message: expect.arrayContaining([
+        'page deve ser maior ou igual a 1',
+        'limit deve ser no máximo 100',
+        'endDate não pode ser anterior a startDate',
+        'status deve ser um status de pedido válido',
+      ]) as unknown,
+    });
+    expect(findAll).not.toHaveBeenCalled();
   });
 });

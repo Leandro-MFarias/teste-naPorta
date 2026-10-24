@@ -123,4 +123,26 @@ describe('Swagger', () => {
       required: ['data'],
     });
   });
+
+  it('documenta GET /orders com filtros e paginação', () => {
+    const operation = document.paths['/orders']?.get;
+
+    expect(operation?.security).toEqual([{ bearer: [] }]);
+    expect(Object.keys(operation?.responses ?? {}).sort()).toEqual([
+      '200',
+      '400',
+      '401',
+    ]);
+    expect(
+      operation?.parameters?.map((p) => 'name' in p && p.name).sort(),
+    ).toEqual([
+      'endDate',
+      'limit',
+      'orderNumber',
+      'page',
+      'startDate',
+      'status',
+    ]);
+    expect(document.components?.schemas).toHaveProperty('OrderListResponseDto');
+  });
 });

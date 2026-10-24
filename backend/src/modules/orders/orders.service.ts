@@ -1,14 +1,19 @@
 import { ConflictException, Injectable } from '@nestjs/common';
 import type { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface.js';
-import type { ApiResponse } from '../../common/interfaces/api-response.interface.js';
+import type {
+  ApiResponse,
+  PaginatedResponse,
+} from '../../common/interfaces/api-response.interface.js';
 import { Prisma } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { CustomersService } from '../customers/customers.service.js';
 import type {
   CreateOrderRequest,
+  ListOrdersQuery,
   OrderItemRequest,
 } from './interfaces/order-request.interface.js';
 import type { OrderResponse } from './interfaces/order-response.interface.js';
+import { toCreatedAtRange } from './order-period.js';
 import { toOrderResponse } from './order.mapper.js';
 
 export const ORDER_NUMBER_IN_USE_MESSAGE =
@@ -72,6 +77,60 @@ export class OrdersService {
       throw error;
     }
   }
+
+  /**
+   * Lista pedidos ativos com filtros combináveis e paginação. Ordena por
+   * createdAt desc com id como desempate, para páginas estáveis.
+   */
+  async findAll(
+    query: ListOrdersQuery,
+  ): Promise<PaginatedResponse<OrderResponse>> {
+    const createdAt = toCreatedAtRange(query.startDate, query.endDate);
+    const where: Prisma.OrderWhereInput = {
+      deletedAt: null,
+      ...(query.status && { status: query.status }),
+      ...(query.orderNumber && {
+        orderNumber: {
+          contains: escapeLikePattern(query.orderNumber),
+          mode: 'insensitive',
+        },
+      }),
+      ...(createdAt && { createdAt }),
+    };
+
+    // Mesmo snapshot para o total e a página.
+    const [total, orders] = await this.prisma.$transaction(
+      [
+        this.prisma.order.count({ where }),
+        this.prisma.order.findMany({
+          where,
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          skip: (query.page - 1) * query.limit,
+          take: query.limit,
+          include: { customer: true, items: true },
+        }),
+      ],
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
+
+    return {
+      data: orders.map(toOrderResponse),
+      meta: {
+        total,
+        page: query.page,
+        limit: query.limit,
+        totalPages: Math.ceil(total / query.limit),
+      },
+    };
+  }
+}
+
+/**
+ * O Prisma não escapa curingas em `contains` (vira ILIKE): sem isto, "%" ou
+ * "_" no termo casariam qualquer texto. A barra é o escape padrão do LIKE.
+ */
+export function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, '\\$&');
 }
 
 /** "YYYY-MM-DD" -> meia-noite UTC, gravada na coluna DATE sem deslocamento. */

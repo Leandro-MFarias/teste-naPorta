@@ -208,11 +208,20 @@ describe('ListOrdersQueryDto', () => {
   it.each([
     [{ page: '0' }, 'page deve ser maior ou igual a 1'],
     [{ page: 'abc' }, 'page deve ser um número inteiro'],
+    [{ page: '1e20' }, 'page deve ser no máximo 1000000'],
     [{ limit: '101' }, 'limit deve ser no máximo 100'],
     [{ limit: '1.5' }, 'limit deve ser um número inteiro'],
     [
       { startDate: '2026-13-01' },
       'startDate deve ser uma data ISO 8601 válida',
+    ],
+    [
+      { endDate: '2026-10-24T10:00:00' },
+      'endDate deve ser uma data ISO 8601 válida',
+    ],
+    [
+      { startDate: '2026-10-10', endDate: '2026-10-09' },
+      'endDate não pode ser anterior a startDate',
     ],
     [{ status: 'LOST' }, 'status deve ser um status de pedido válido'],
     [{ unknown: 'x' }, 'property unknown should not exist'],
@@ -230,5 +239,25 @@ describe('ListOrdersQueryDto', () => {
     );
 
     expect(errors).toEqual([]);
+  });
+
+  it('aceita startDate e endDate no mesmo dia', async () => {
+    const { errors } = await validateDto(
+      ListOrdersQueryDto,
+      { startDate: '2026-10-10', endDate: '2026-10-10' },
+      'query',
+    );
+
+    expect(errors).toEqual([]);
+  });
+
+  it('não compara o período quando uma das datas é inválida', async () => {
+    const { errors } = await validateDto(
+      ListOrdersQueryDto,
+      { startDate: 'x', endDate: '2026-10-09' },
+      'query',
+    );
+
+    expect(errors).toEqual(['startDate deve ser uma data ISO 8601 válida']);
   });
 });

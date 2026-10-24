@@ -1,7 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsEnum,
-  IsISO8601,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -11,6 +10,7 @@ import { Trim } from '../../../common/decorators/trim.decorator.js';
 import { PaginationQueryDto } from '../../../common/dto/pagination.dto.js';
 import { OrderStatus } from '../../../generated/prisma/enums.js';
 import type { ListOrdersQuery } from '../interfaces/order-request.interface.js';
+import { IsNotBefore, IsPeriodDate } from '../order-period.validator.js';
 import { ORDER_NUMBER_MAX_LENGTH } from './create-order.dto.js';
 
 export class ListOrdersQueryDto
@@ -33,26 +33,23 @@ export class ListOrdersQueryDto
 
   @ApiPropertyOptional({
     description:
-      'Início do período de criação (inclusivo). YYYY-MM-DD ou data/hora ISO 8601.',
+      'Início do período de criação (inclusivo). YYYY-MM-DD (início do dia em UTC) ou data/hora ISO 8601 com fuso, ex.: 2026-10-01T08:00:00-03:00.',
     example: '2026-10-01',
   })
   @IsOptional()
-  @IsISO8601(
-    { strict: true },
-    { message: 'startDate deve ser uma data ISO 8601 válida' },
-  )
+  @IsPeriodDate({ message: 'startDate deve ser uma data ISO 8601 válida' })
   startDate?: string;
 
   @ApiPropertyOptional({
     description:
-      'Fim do período de criação (inclusivo). Com YYYY-MM-DD, inclui o dia inteiro. Não pode ser anterior a startDate.',
+      'Fim do período de criação (inclusivo). Com YYYY-MM-DD, inclui o dia inteiro (UTC). Não pode ser anterior a startDate.',
     example: '2026-10-31',
   })
   @IsOptional()
-  @IsISO8601(
-    { strict: true },
-    { message: 'endDate deve ser uma data ISO 8601 válida' },
-  )
+  @IsPeriodDate({ message: 'endDate deve ser uma data ISO 8601 válida' })
+  @IsNotBefore('startDate', {
+    message: 'endDate não pode ser anterior a startDate',
+  })
   endDate?: string;
 
   @ApiPropertyOptional({ enum: OrderStatus, enumName: 'OrderStatus' })

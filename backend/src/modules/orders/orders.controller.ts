@@ -1,8 +1,9 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
   ApiCreatedResponse,
+  ApiOkResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
@@ -11,7 +12,11 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
 import { ErrorResponseDto } from '../../common/dto/error-response.dto.js';
 import type { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface.js';
 import { CreateOrderDto } from './dto/create-order.dto.js';
-import { OrderDataResponseDto } from './dto/order-response.dto.js';
+import { ListOrdersQueryDto } from './dto/list-orders-query.dto.js';
+import {
+  OrderDataResponseDto,
+  OrderListResponseDto,
+} from './dto/order-response.dto.js';
 import { OrdersService } from './orders.service.js';
 
 @ApiTags('Orders')
@@ -44,5 +49,24 @@ export class OrdersController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<OrderDataResponseDto> {
     return this.ordersService.create(dto, user);
+  }
+
+  @Get()
+  @ApiOperation({
+    summary: 'Lista pedidos ativos',
+    description:
+      'ADMIN ou USER. Filtros combináveis; pedidos excluídos nunca aparecem. O período usa a data de criação (createdAt). Ordenação: mais recentes primeiro. Sem resultados (ou página além do total), retorna 200 com `data: []` e o `meta` correspondente.',
+  })
+  @ApiOkResponse({
+    description: 'Página de pedidos.',
+    type: OrderListResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description:
+      'Query inválida (ex.: page/limit fora dos limites, data inválida, endDate anterior a startDate).',
+    type: ErrorResponseDto,
+  })
+  findAll(@Query() query: ListOrdersQueryDto): Promise<OrderListResponseDto> {
+    return this.ordersService.findAll(query);
   }
 }

@@ -176,8 +176,11 @@ Campos mínimos:
 
 -   `id`
 -   `name`
--   `document` --- CPF normalizado, armazenado apenas com dígitos e
-    único.
+-   `document` --- CPF (pessoa física) ou CNPJ (pessoa jurídica)
+    normalizado, sem pontuação, e único.
+-   `type` --- enum `PERSON` (CPF, 11 dígitos) ou `COMPANY` (CNPJ, 14
+    caracteres), definido automaticamente a partir do documento; não é
+    informado pelo cliente da API.
 -   `ordersCount` --- contagem persistida de pedidos ativos, não
     excluídos logicamente.
 -   `createdAt`
@@ -189,10 +192,14 @@ Regras:
     nesta etapa.
 -   Clientes são criados ou reutilizados automaticamente durante a
     criação/edição de pedidos.
--   Validar o CPF, incluindo dígitos verificadores, antes de persistir.
--   Remover pontuação e espaços do CPF antes de procurar, validar e
-    armazenar.
--   A restrição de unicidade do CPF deve existir no banco de dados.
+-   Validar o documento como CPF ou CNPJ, incluindo dígitos
+    verificadores, antes de persistir. Documento que não for CPF nem
+    CNPJ válido é rejeitado.
+-   Aceitar o CNPJ alfanumérico da Receita Federal (12 caracteres
+    alfanuméricos + 2 dígitos verificadores), além do numérico.
+-   Remover pontuação e espaços do documento (e converter letras para
+    maiúsculas) antes de procurar, validar e armazenar.
+-   A restrição de unicidade do documento deve existir no banco de dados.
     Lidar com conflitos de concorrência sem criar clientes duplicados.
 
 ### 6.3 Order
@@ -419,14 +426,14 @@ endpoints.
 
 ## 10. Regras de negócio de clientes e pedidos
 
-### 10.1 Criar ou reutilizar cliente por CPF
+### 10.1 Criar ou reutilizar cliente por documento (CPF/CNPJ)
 
 Ao criar um pedido:
 
 1.  Receber os dados do cliente necessários no request do pedido,
-    incluindo nome e CPF.
-2.  Normalizar e validar o CPF.
-3.  Procurar cliente pelo CPF normalizado.
+    incluindo nome e documento (CPF ou CNPJ).
+2.  Normalizar e validar o documento e definir o tipo (`PERSON`/`COMPANY`).
+3.  Procurar cliente pelo documento normalizado.
 4.  Se não existir, criar o cliente.
 5.  Se existir com o mesmo nome, reutilizar o cliente sem criar
     duplicata.
@@ -436,7 +443,7 @@ Ao criar um pedido:
 8.  Incrementar `ordersCount` do cliente.
 9.  Executar as operações relacionadas em uma única transação.
 
-O banco deve impor unicidade do CPF; a lógica da aplicação deve lidar
+O banco deve impor unicidade do documento; a lógica da aplicação deve lidar
 com requisições concorrentes de forma segura.
 
 O aviso de divergência de nome é um **warning**, não um erro. Exemplo
@@ -452,7 +459,7 @@ ilustrativo:
   "warnings": [
     {
       "code": "CUSTOMER_NAME_UPDATED",
-      "message": "O CPF já estava cadastrado. O nome do cliente foi atualizado."
+      "message": "O documento já estava cadastrado. O nome do cliente foi atualizado."
     }
   ]
 }
@@ -464,13 +471,13 @@ Incluir `warnings` apenas quando houver aviso.
 ### 10.2 Editar cliente durante a edição do pedido
 
 A edição flexível permite atualizar os dados do cliente do pedido.
-Reutilizar a regra de normalização/validação de CPF e de busca por CPF.
+Reutilizar a regra de normalização/validação de documento e de busca por documento.
 Não criar endpoints independentes de CRUD de clientes.
 
 Ao trocar o cliente associado a um pedido, recalcular a contagem de
 pedidos ativos dos clientes envolvidos dentro da mesma transação:
 decrementar o cliente anterior e incrementar o novo, sem permitir
-contagens negativas ou inconsistentes. Se o CPF for o mesmo e o nome for
+contagens negativas ou inconsistentes. Se o documento for o mesmo e o nome for
 diferente, atualizar o cadastro e incluir o warning apropriado.
 
 ### 10.3 Contagem de pedidos ativos
@@ -585,7 +592,7 @@ O request deve permitir informar:
 -   `orderNumber`;
 -   `expectedDeliveryDate`;
 -   `deliveryAddress`;
--   dados do cliente (`name` e CPF/documento);
+-   dados do cliente (`name` e documento CPF/CNPJ);
 -   lista não vazia de itens, cada um com descrição e preço.
 
 O `status` inicial deve ser `PENDING`, definido pelo backend. O usuário
@@ -709,7 +716,7 @@ de validação.
 
 Códigos esperados:
 
--   `400 Bad Request`: entrada inválida, CPF inválido ou transição de
+-   `400 Bad Request`: entrada inválida, CPF/CNPJ inválido ou transição de
     status não permitida.
 -   `401 Unauthorized`: token ausente, inválido ou expirado, ou
     credenciais inválidas.
@@ -729,9 +736,9 @@ ou da aplicação.
     `forbidNonWhitelisted: true` e transformação de tipos quando
     apropriado.
 -   Validar DTOs em todas as entradas.
--   Validar email, senha, UUID, datas, enum de status, CPF, número do
+-   Validar email, senha, UUID, datas, enum de status, CPF/CNPJ, número do
     pedido, itens e preços.
--   Normalizar email e CPF antes de persistir.
+-   Normalizar email e documento (CPF/CNPJ) antes de persistir.
 -   Hash de senha com bcrypt ou solução equivalente segura.
 -   Não expor `passwordHash` nem outros campos internos.
 -   Não confiar no papel ou ID do criador enviados no body.
@@ -803,9 +810,9 @@ Cobrir, no mínimo:
 -   autenticação: credenciais corretas/incorretas e usuário inativo;
 -   hash e verificação de senha;
 -   autorização por papel;
--   validação de CPF e normalização;
+-   validação de CPF/CNPJ, normalização e identificação do tipo de cliente;
 -   criação e reutilização de cliente;
--   warning quando o nome diverge para um CPF já cadastrado;
+-   warning quando o nome diverge para um documento já cadastrado;
 -   transições válidas e inválidas de status;
 -   contagem de pedidos ativos;
 -   bloqueio de edição/exclusão de pedido excluído;
@@ -822,7 +829,7 @@ teste isolado:
     itens;
 -   criação atômica de pedido;
 -   rollback se uma etapa da criação falhar;
--   CPF único sob tentativas de criação concorrentes;
+-   documento único sob tentativas de criação concorrentes;
 -   número do pedido único;
 -   atualização de `ordersCount` ao criar, trocar cliente e excluir
     logicamente;
@@ -953,7 +960,7 @@ etapa:
 8.  Implementar autenticação, JWT, guards e autorização por papel.
 9.  Implementar criação administrativa de usuários e os contratos
     `UserRequest`/`UserResponse`.
-10. Implementar regras de CPF e criação/reutilização de clientes.
+10. Implementar regras de CPF/CNPJ e criação/reutilização de clientes.
 11. Implementar criação de pedido e itens com transação.
 12. Implementar listagem, filtros e paginação.
 13. Implementar consulta por ID e PATCH, incluindo transições de status
@@ -980,7 +987,7 @@ A fundação estará concluída quando:
     documento.
 -   [ ] Request e response de User tiverem interfaces distintas.
 -   [ ] Nenhuma resposta expuser senha ou hash.
--   [ ] CPF for normalizado, validado e único.
+-   [ ] CPF/CNPJ for normalizado, validado, único e definir o tipo do cliente.
 -   [ ] Clientes forem criados/reutilizados automaticamente nos pedidos.
 -   [ ] Aviso de divergência de nome for retornado sem tratar a operação
     como erro.

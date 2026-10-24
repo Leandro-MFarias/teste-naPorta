@@ -1,10 +1,10 @@
 import { defineConfig } from 'vitest/config';
 
-// Testes unitários: arquivos *.spec.ts dentro de src/ e prisma/ (dados do seed).
+// Testes unitários: arquivos *.spec.ts em src/, prisma/ (dados do seed) e test/.
 // Testes de integração ficam em vitest.config.integration.ts.
 export default defineConfig({
   test: {
-    include: ['src/**/*.spec.ts', 'prisma/**/*.spec.ts'],
+    include: ['{src,prisma,test}/**/*.spec.ts'],
     exclude: ['**/*.integration-spec.ts', 'node_modules/**', 'dist/**'],
     environment: 'node',
     setupFiles: ['test/setup.ts'],

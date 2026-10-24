@@ -12,6 +12,7 @@ import {
   validateSync,
   type ValidationOptions,
 } from 'class-validator';
+import { DEFAULT_CORS_ORIGINS, parseCorsOrigins } from './cors.js';
 import { parseDurationToSeconds } from './duration.js';
 
 export enum Environment {
@@ -47,6 +48,24 @@ function IsDurationAtLeast(
   };
 }
 
+function IsCorsOriginList(
+  validationOptions?: ValidationOptions,
+): PropertyDecorator {
+  return (target, propertyName) => {
+    registerDecorator({
+      name: 'isCorsOriginList',
+      target: target.constructor,
+      propertyName: String(propertyName),
+      options: validationOptions,
+      validator: {
+        validate(value: unknown): boolean {
+          return typeof value === 'string' && parseCorsOrigins(value) !== null;
+        },
+      },
+    });
+  };
+}
+
 export class EnvironmentVariables {
   @IsEnum(Environment)
   NODE_ENV: Environment = Environment.Development;
@@ -55,7 +74,7 @@ export class EnvironmentVariables {
   @IsInt()
   @Min(1)
   @Max(65535)
-  PORT: number = 3000;
+  PORT: number = 3333;
 
   @IsString()
   @Matches(/^postgres(ql)?:\/\/.+/, {
@@ -74,6 +93,13 @@ export class EnvironmentVariables {
       'JWT_EXPIRES_IN must use the format <number><s|m|h|d> and be at least 5h',
   })
   JWT_EXPIRES_IN: string = '5h';
+
+  /** Origens liberadas no CORS, separadas por vírgula. */
+  @IsCorsOriginList({
+    message:
+      'CORS_ORIGINS must be a comma-separated list of http(s) origins, e.g. http://localhost:3000',
+  })
+  CORS_ORIGINS: string = DEFAULT_CORS_ORIGINS;
 }
 
 /**

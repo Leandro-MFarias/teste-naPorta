@@ -18,15 +18,16 @@ describe('validateEnv', () => {
     expect(env.JWT_EXPIRES_IN).toBe('8h');
   });
 
-  it('aplica os valores padrão de NODE_ENV, PORT e JWT_EXPIRES_IN', () => {
+  it('aplica os valores padrão de NODE_ENV, PORT, JWT_EXPIRES_IN e CORS_ORIGINS', () => {
     const env = validateEnv({
       DATABASE_URL: validEnv.DATABASE_URL,
       JWT_SECRET: validEnv.JWT_SECRET,
     });
 
     expect(env.NODE_ENV).toBe(Environment.Development);
-    expect(env.PORT).toBe(3000);
+    expect(env.PORT).toBe(3333);
     expect(env.JWT_EXPIRES_IN).toBe('5h');
+    expect(env.CORS_ORIGINS).toBe('http://localhost:3000');
   });
 
   it.each(['DATABASE_URL', 'JWT_SECRET'])(
@@ -91,4 +92,24 @@ describe('validateEnv', () => {
     expect(message).toContain('JWT_SECRET');
     expect(message).not.toContain(secret);
   });
+
+  it('aceita uma lista de origens em CORS_ORIGINS', () => {
+    const env = validateEnv({
+      ...validEnv,
+      CORS_ORIGINS: 'http://localhost:3000, https://portal.example.com',
+    });
+
+    expect(env.CORS_ORIGINS).toBe(
+      'http://localhost:3000, https://portal.example.com',
+    );
+  });
+
+  it.each(['', '*', 'localhost:3000', 'https://portal.example.com/app'])(
+    'rejeita CORS_ORIGINS inválida %j',
+    (origins) => {
+      expect(() => validateEnv({ ...validEnv, CORS_ORIGINS: origins })).toThrow(
+        'CORS_ORIGINS',
+      );
+    },
+  );
 });

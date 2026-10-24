@@ -51,11 +51,12 @@ services:
     environment:
       <<: *app-environment
       NODE_ENV: production
-      PORT: 3000
+      PORT: 3333
       JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET no arquivo de ambiente}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-5h}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
     ports:
-      - '${API_PORT:-3000}:3000'
+      - '${API_PORT:-3333}:3333'
     depends_on:
       db:
         condition: service_healthy

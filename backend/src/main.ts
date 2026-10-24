@@ -3,6 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module.js';
 import { configureApp } from './app.setup.js';
+import { createCorsOptions, parseCorsOrigins } from './config/cors.js';
 import type { EnvironmentVariables } from './config/env.validation.js';
 import { setupSwagger, SWAGGER_PATH } from './swagger.js';
 
@@ -12,6 +13,12 @@ async function bootstrap() {
     app.get<ConfigService<EnvironmentVariables, true>>(ConfigService);
 
   configureApp(app);
+  // CORS_ORIGINS já foi validada na inicialização (validateEnv).
+  app.enableCors(
+    createCorsOptions(
+      parseCorsOrigins(config.get('CORS_ORIGINS', { infer: true })) ?? [],
+    ),
+  );
   setupSwagger(app);
 
   const port = config.get('PORT', { infer: true });

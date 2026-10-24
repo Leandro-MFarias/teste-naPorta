@@ -125,7 +125,7 @@ Variáveis esperadas, no mínimo:
 
 ``` dotenv
 NODE_ENV=development
-PORT=3000
+PORT=3333
 POSTGRES_USER=local_user
 POSTGRES_PASSWORD=local_password
 POSTGRES_DB=local_db
@@ -133,6 +133,7 @@ POSTGRES_PORT=5432
 DATABASE_URL=postgresql://local_user:local_password@localhost:5432/local_db?schema=public
 JWT_SECRET=replace-with-a-long-random-secret-of-at-least-32-chars
 JWT_EXPIRES_IN=5h
+CORS_ORIGINS=http://localhost:3000
 ```
 
 As variáveis `POSTGRES_*` configuram o container do banco; a aplicação
@@ -149,6 +150,11 @@ Regras:
     horas**. O padrão será `5h`; configurações maiores são permitidas,
     mas valores menores devem ser rejeitados.
 -   Documentar as variáveis no README.
+-   A API usa a porta `3333` por padrão, deixando a `3000` para o
+    frontend Next.js.
+-   `CORS_ORIGINS` lista, separadas por vírgula, as origens liberadas no
+    CORS (padrão `http://localhost:3000`, o frontend local). Outros sites
+    precisam ser incluídos nessa variável; o README documenta como.
 -   Não registrar senhas, hashes, tokens ou segredos em logs.
 
 ## 6. Modelo de dados

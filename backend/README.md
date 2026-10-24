@@ -20,6 +20,7 @@ está em [`docs/PLANO_FUNDACAO.md`](docs/PLANO_FUNDACAO.md).
 - [Testes](#testes)
 - [Swagger](#swagger)
 - [Autenticação](#autenticação)
+- [CORS](#cors)
 - [Endpoints e permissões](#endpoints-e-permissões)
 - [Regras de pedidos](#regras-de-pedidos)
 - [Formato das respostas](#formato-das-respostas)
@@ -94,13 +95,14 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
 | Variável | Descrição |
 | --- | --- |
 | `NODE_ENV` | `development`, `test` ou `production` (padrão `development`) |
-| `PORT` | Porta da API ao rodar localmente (padrão `3000`) |
-| `API_PORT` | Porta publicada pela API no Docker Compose (padrão `3000`) |
+| `PORT` | Porta da API ao rodar localmente (padrão `3333`) |
+| `API_PORT` | Porta publicada pela API no Docker Compose (padrão `3333`) |
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | Configuram o container do PostgreSQL |
 | `POSTGRES_PORT` | Porta do PostgreSQL publicada no host (padrão `5432`) |
 | `DATABASE_URL` | URL de conexão usada pela aplicação local e pelo Prisma CLI |
 | `JWT_SECRET` | Obrigatório, mínimo de 32 caracteres |
 | `JWT_EXPIRES_IN` | Validade do token, formato `<número><s\|m\|h\|d>`; mínimo `5h` (padrão `5h`) |
+| `CORS_ORIGINS` | Origens liberadas no CORS, separadas por vírgula (padrão `http://localhost:3000`); veja [CORS](#cors) |
 | `TEST_DATABASE_URL` | Opcional: banco dos testes de integração (nome deve terminar em `_test`) |
 
 As variáveis são validadas na inicialização: valores ausentes ou
@@ -116,7 +118,7 @@ npm install            # também executa prisma generate (postinstall)
 npm run db:up          # sobe o PostgreSQL e espera ficar saudável
 npm run prisma:migrate:deploy
 npm run prisma:seed    # opcional: dados de demonstração
-npm run start:dev      # API em http://localhost:3000 (sobe o banco se preciso)
+npm run start:dev      # API em http://localhost:3333 (sobe o banco se preciso)
 ```
 
 Para parar o banco: `npm run db:down` (os dados ficam no volume
@@ -132,7 +134,7 @@ npm run docker:seed    # opcional: seed dentro do container
 npm run docker:down    # para e remove os containers (o volume é mantido)
 ```
 
-- A API fica em `http://localhost:${API_PORT}` (padrão `3000`). Não rode
+- A API fica em `http://localhost:${API_PORT}` (padrão `3333`). Não rode
   `start:dev` ao mesmo tempo na mesma porta.
 - O serviço `migrate` executa `prisma migrate deploy` e termina; a API
   só sobe depois que ele conclui com sucesso.
@@ -228,8 +230,8 @@ termine em `_test` é recusado. Os arquivos rodam em série.
 
 Com a API rodando:
 
-- Interface: `http://localhost:3000/api/docs`
-- Especificação OpenAPI (JSON): `http://localhost:3000/api/docs-json`
+- Interface: `http://localhost:3333/api/docs`
+- Especificação OpenAPI (JSON): `http://localhost:3333/api/docs-json`
 
 Para testar rotas protegidas, faça login em `POST /auth/login`, clique em
 **Authorize** e informe o `accessToken`.
@@ -261,6 +263,38 @@ Content-Type: application/json
   `401 "Email ou senha inválidos."`.
 - A cada requisição o usuário é conferido no banco: se for desativado,
   tokens já emitidos deixam de funcionar, e o papel usado é o atual.
+
+## CORS
+
+A API roda na porta `3333` para deixar a `3000` livre para o frontend
+Next.js. Navegadores só permitem que um site chame a API se a origem
+dele estiver liberada no CORS. **Por padrão, apenas
+`http://localhost:3000` (o Next.js local) está liberado.**
+
+**Para liberar outros sites** (o portal em produção, um ambiente de
+homologação, outra porta local), informe todas as origens em
+`CORS_ORIGINS`, separadas por vírgula, e reinicie a API:
+
+```dotenv
+CORS_ORIGINS=http://localhost:3000,https://portal.naporta.com.br
+```
+
+- Cada item é uma origem exata: protocolo + domínio + porta, sem
+  caminho (`https://portal.naporta.com.br`, não
+  `https://portal.naporta.com.br/app`). `*` não é aceito.
+- `http://localhost:3000` e `http://127.0.0.1:3000` são origens
+  diferentes.
+- Ao definir `CORS_ORIGINS`, a lista substitui o padrão: inclua
+  `http://localhost:3000` se ainda quiser o frontend local.
+- No Docker Compose a variável é repassada à API a partir do arquivo de
+  ambiente (`--env-file`).
+- Valor inválido impede a API de subir, com erro indicando
+  `CORS_ORIGINS`.
+- São liberados os métodos `GET`, `POST`, `PATCH` e `DELETE` e os headers
+  `Content-Type` e `Authorization`. Cookies não são usados (o token vai no
+  header), então `credentials` fica desabilitado.
+- O CORS vale apenas para navegadores; ferramentas como curl, Postman ou
+  outro backend não são afetadas.
 
 ## Endpoints e permissões
 
@@ -417,6 +451,8 @@ Erro (todas as rotas):
   `NODE_ENV=production`).
 - Aplique migrations com `prisma migrate deploy`, nunca `migrate dev` ou
   `db push`.
+- Libere em `CORS_ORIGINS` somente os domínios reais do portal, com
+  `https://`.
 - Publique a API atrás de HTTPS (proxy reverso ou balanceador); o token
   trafega no header `Authorization`.
 - O Swagger (`/api/docs`) fica disponível em todos os ambientes;

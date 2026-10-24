@@ -459,11 +459,18 @@ ilustrativo:
   "warnings": [
     {
       "code": "CUSTOMER_NAME_UPDATED",
-      "message": "O documento já estava cadastrado. O nome do cliente foi atualizado."
+      "message": "CPF já cadastrado. O nome do cliente foi atualizado."
     }
   ]
 }
 ```
+
+A mensagem varia com o tipo do cliente:
+
+-   `PERSON` (CPF): "CPF já cadastrado. O nome do cliente foi
+    atualizado."
+-   `COMPANY` (CNPJ): "CNPJ já cadastrado. A razão social foi
+    atualizada."
 
 A estrutura final de `data` deve seguir o contrato completo de pedido.
 Incluir `warnings` apenas quando houver aviso.

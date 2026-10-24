@@ -113,19 +113,33 @@ uma finalidade clara e ser aplicada consistentemente.
 Criar `.env.example` com as variáveis necessárias, sem segredos reais.
 Validar as variáveis na inicialização da aplicação.
 
+Os valores locais ficam em arquivos por ambiente, `.env.<NODE_ENV>`
+(ex.: `.env.development`). A aplicação e o Prisma CLI carregam
+`.env.<NODE_ENV>` (padrão `development`) e depois `.env`; variáveis já
+definidas no ambiente têm prioridade. O `compose.yaml` recebe o mesmo
+arquivo via `--env-file`.
+
 Variáveis esperadas, no mínimo:
 
 ``` dotenv
 NODE_ENV=development
 PORT=3000
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/naporta?schema=public
-JWT_SECRET=replace-with-a-long-random-secret
+POSTGRES_USER=local_user
+POSTGRES_PASSWORD=local_password
+POSTGRES_DB=local_db
+POSTGRES_PORT=5432
+DATABASE_URL=postgresql://local_user:local_password@localhost:5432/local_db?schema=public
+JWT_SECRET=replace-with-a-long-random-secret-of-at-least-32-chars
 JWT_EXPIRES_IN=5h
 ```
 
+As variáveis `POSTGRES_*` configuram o container do banco; a aplicação
+usa apenas `DATABASE_URL`.
+
 Regras:
 
--   Nunca commitar `.env` ou segredos reais.
+-   Nunca commitar arquivos `.env`/`.env.*` (exceto `.env.example`) ou
+    segredos reais.
 -   Nunca usar um segredo JWT fixo no código.
 -   Validar que `JWT_SECRET` está configurado em ambientes que exigem
     autenticação.
@@ -555,6 +569,10 @@ Swagger.
 
   `DELETE`          `/orders/:id`     Excluir pedido    ADMIN
                                       logicamente       
+
+  `GET`             `/health`         Saúde da API e do Público
+                                      banco (seção      
+                                      13.3)             
   -----------------------------------------------------------------------
 
 Não criar CRUD independente de clientes nesta etapa. A gestão de
@@ -615,6 +633,44 @@ Regras:
 
 Documentar o comportamento quando não houver resultados e validar
 valores inválidos de `page` e `limit`.
+
+### 13.3 Health check
+
+`GET /health` verifica a saúde da API e do banco de dados, para uso em
+monitoramento e healthchecks de container.
+
+-   Rota pública: deve continuar acessível sem token quando a
+    autenticação global for implementada.
+-   `200 OK` quando o banco responde; `503 Service Unavailable` quando
+    não responde.
+-   `openConnections`: sessões de clientes abertas no PostgreSQL
+    (`pg_stat_activity`).
+-   `availableConnections`: `max_connections` menos as conexões
+    reservadas (`superuser_reserved_connections` e
+    `reserved_connections`) e as abertas.
+-   Exceção ao contrato da seção 14.1: segue o formato usual de health
+    checks, sem envelope `data`.
+
+``` json
+{
+  "status": "Healthy",
+  "database": {
+    "status": "Healthy",
+    "openConnections": 1,
+    "availableConnections": 96,
+    "maxConnections": 100
+  }
+}
+```
+
+Banco indisponível (`503`):
+
+``` json
+{
+  "status": "Unhealthy",
+  "database": { "status": "Unhealthy" }
+}
+```
 
 ## 14. Contrato de respostas HTTP
 
@@ -690,8 +746,22 @@ ou da aplicação.
 
 ## 16. Swagger / OpenAPI
 
-Configurar documentação automática em `/api/docs`.
+Configurar documentação automática em `/api/docs` (interface Swagger UI)
+e `/api/docs-json` (especificação OpenAPI em JSON). A configuração fica
+em `src/swagger.ts`.
 
+**Documentar junto com o código:** todo endpoint deve ser documentado
+no Swagger no mesmo momento em que é criado, nunca em uma etapa
+posterior. Uma rota só está concluída quando aparece corretamente em
+`/api/docs`.
+
+-   Usar classes (DTOs) com `@ApiProperty`/`@ApiPropertyOptional` para
+    requests e responses; o Swagger não lê interfaces TypeScript.
+-   Em cada controller: `@ApiTags`, `@ApiOperation` e um decorator de
+    resposta para cada status possível (`@ApiOkResponse`,
+    `@ApiCreatedResponse`, `@ApiBadRequestResponse` etc.).
+-   Manter um teste que verifica se o endpoint aparece no documento
+    OpenAPI gerado (ver `src/swagger.spec.ts`).
 -   Descrever todos os endpoints, DTOs, respostas de sucesso e erros.
 -   Documentar query params, paginação, filtros e enums.
 -   Configurar o esquema de segurança Bearer JWT no Swagger.
@@ -770,8 +840,12 @@ Não usar o banco de desenvolvimento para testes destrutivos.
 
 ### 18.1 Docker
 
-Criar `Dockerfile` para a API e `docker-compose.yml` para executar
-localmente a API e o PostgreSQL.
+Criar `Dockerfile` para a API e `compose.yaml` para executar localmente
+a API e o PostgreSQL.
+
+Até a etapa 17, o `compose.yaml` executa apenas o PostgreSQL; a API roda
+localmente com `npm run start:dev`. Subir e parar o banco com
+`npm run db:up` e `npm run db:down`, que usam `.env.development`.
 
 -   Usar volumes para persistência local do banco.
 -   Configurar variáveis de ambiente.
@@ -820,8 +894,12 @@ Criar scripts claros e documentados, incluindo equivalentes para:
     (`vitest run --coverage`)
 -   `test:integration` --- testes de integração
     (`vitest run --config vitest.config.integration.ts`)
--   `prisma:generate`
--   `prisma:migrate`
+-   `db:up` / `db:down` --- sobe/para o PostgreSQL do `compose.yaml`
+-   `prisma:generate` --- também executado no `postinstall`
+-   `prisma:migrate` --- cria e aplica migrations em desenvolvimento
+    (`prisma migrate dev`)
+-   `prisma:migrate:deploy` --- aplica migrations existentes
+    (`prisma migrate deploy`)
 -   `prisma:seed`
 
 **Não criar `test:e2e` nem configurar uma suíte E2E**, pois o escopo
@@ -863,23 +941,26 @@ etapa:
 1.  Inicializar NestJS 12 em ESM, TypeScript estrito, ESLint, Prettier,
     Vitest e scripts.
 2.  Configurar variáveis de ambiente e validação de configuração.
-3.  Configurar PostgreSQL, Docker Compose, Prisma e migrations.
-4.  Criar os modelos e relacionamentos de User, Customer, Order e
+3.  Configurar PostgreSQL, Docker Compose, Prisma, migrations e a rota
+    `GET /health` (seção 13.3).
+4.  Configurar Swagger em `/api/docs` com Bearer JWT. A partir desta
+    etapa, todo endpoint é documentado no Swagger no mesmo momento em
+    que é criado (seção 16).
+5.  Criar os modelos e relacionamentos de User, Customer, Order e
     OrderItem.
-5.  Implementar contratos de request/response, DTOs e validação global.
-6.  Implementar resposta de erro padronizada.
-7.  Implementar autenticação, JWT, guards e autorização por papel.
-8.  Implementar criação administrativa de usuários e os contratos
+6.  Implementar contratos de request/response, DTOs e validação global.
+7.  Implementar resposta de erro padronizada.
+8.  Implementar autenticação, JWT, guards e autorização por papel.
+9.  Implementar criação administrativa de usuários e os contratos
     `UserRequest`/`UserResponse`.
-9.  Implementar regras de CPF e criação/reutilização de clientes.
-10. Implementar criação de pedido e itens com transação.
-11. Implementar listagem, filtros e paginação.
-12. Implementar consulta por ID e PATCH, incluindo transições de status
+10. Implementar regras de CPF e criação/reutilização de clientes.
+11. Implementar criação de pedido e itens com transação.
+12. Implementar listagem, filtros e paginação.
+13. Implementar consulta por ID e PATCH, incluindo transições de status
     e substituição transacional de itens.
-13. Implementar exclusão lógica e contagem de pedidos ativos.
-14. Configurar Swagger com Bearer JWT.
+14. Implementar exclusão lógica e contagem de pedidos ativos.
 15. Criar seed idempotente com usuários e pedidos fictícios.
-16. Criar testes unitários e de integração.
+16. Completar os testes unitários e de integração.
 17. Finalizar Docker, scripts e README.
 18. Executar a verificação final: build, lint, testes unitários, testes
     de integração, migrations e seed em ambiente apropriado.

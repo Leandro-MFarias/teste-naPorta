@@ -36,6 +36,12 @@ describe('Swagger', () => {
     });
   });
 
+  it('publica o schema de erro padronizado', () => {
+    expect(document.components?.schemas?.ErrorResponseDto).toMatchObject({
+      required: ['statusCode', 'message', 'error'],
+    });
+  });
+
   it('documenta GET /health com respostas 200 e 503', () => {
     const operation = document.paths['/health']?.get;
 

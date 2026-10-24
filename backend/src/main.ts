@@ -2,7 +2,7 @@ import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module.js';
-import { createValidationPipe } from './common/pipes/validation.pipe.js';
+import { configureApp } from './app.setup.js';
 import type { EnvironmentVariables } from './config/env.validation.js';
 import { setupSwagger, SWAGGER_PATH } from './swagger.js';
 
@@ -11,7 +11,7 @@ async function bootstrap() {
   const config =
     app.get<ConfigService<EnvironmentVariables, true>>(ConfigService);
 
-  app.useGlobalPipes(createValidationPipe());
+  configureApp(app);
   setupSwagger(app);
 
   const port = config.get('PORT', { infer: true });

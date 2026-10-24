@@ -27,3 +27,12 @@ export interface PaginatedResponse<T> {
   data: T[];
   meta: PaginationMeta;
 }
+
+/** Resposta de erro padronizada (seção 14.2). */
+export interface ApiErrorResponse {
+  statusCode: number;
+  /** Lista quando houver múltiplos erros de validação. */
+  message: string | string[];
+  /** Nome do status HTTP, ex.: BAD_REQUEST. */
+  error: string;
+}

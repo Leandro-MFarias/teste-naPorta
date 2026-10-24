@@ -4,6 +4,7 @@ import {
   SwaggerModule,
   type OpenAPIObject,
 } from '@nestjs/swagger';
+import { ErrorResponseDto } from './common/dto/error-response.dto.js';
 
 export const SWAGGER_PATH = 'api/docs';
 
@@ -16,7 +17,10 @@ export function createSwaggerDocument(app: INestApplication): OpenAPIObject {
     .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' })
     .build();
 
-  return SwaggerModule.createDocument(app, config);
+  return SwaggerModule.createDocument(app, config, {
+    // Formato de erro comum a todas as rotas (seção 14.2).
+    extraModels: [ErrorResponseDto],
+  });
 }
 
 /**

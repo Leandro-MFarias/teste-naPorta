@@ -178,6 +178,32 @@ export class OrdersService {
   }
 
   /**
+   * Exclusão lógica (seção 12): preenche deletedAt e decrementa ordersCount
+   * do cliente uma única vez, na mesma transação. O UPDATE condicional a
+   * deletedAt IS NULL é atômico: em exclusões concorrentes do mesmo pedido,
+   * a segunda espera a primeira, não encontra linha ativa e retorna 404,
+   * sem decrementar de novo. O orderNumber continua reservado.
+   */
+  async remove(id: string): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const [deleted] = await tx.order.updateManyAndReturn({
+        where: { id, deletedAt: null },
+        data: { deletedAt: new Date() },
+        select: { customerId: true },
+      });
+      if (!deleted) {
+        throw new NotFoundException(ORDER_NOT_FOUND_MESSAGE);
+      }
+
+      // O CHECK orders_count >= 0 do banco impede contagem negativa.
+      await tx.customer.update({
+        where: { id: deleted.customerId },
+        data: { ordersCount: { decrement: 1 } },
+      });
+    });
+  }
+
+  /**
    * Lista pedidos ativos com filtros combináveis e paginação. Ordena por
    * createdAt desc com id como desempate, para páginas estáveis.
    */

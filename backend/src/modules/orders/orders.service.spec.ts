@@ -565,3 +565,59 @@ describe('OrdersService.update', () => {
     ).rejects.toThrow(new ConflictException(ORDER_NUMBER_IN_USE_MESSAGE));
   });
 });
+
+describe('OrdersService.remove', () => {
+  const updateManyAndReturn =
+    vi.fn<(args: unknown) => Promise<{ customerId: string }[]>>();
+  const customerUpdate = vi.fn<(args: unknown) => Promise<Customer>>();
+  const tx = {
+    order: { updateManyAndReturn },
+    customer: { update: customerUpdate },
+  };
+  const $transaction = vi.fn((fn: (client: typeof tx) => Promise<unknown>) =>
+    fn(tx),
+  );
+  let service: OrdersService;
+
+  beforeEach(async () => {
+    updateManyAndReturn
+      .mockReset()
+      .mockResolvedValue([{ customerId: customer.id }]);
+    customerUpdate.mockReset().mockResolvedValue(customer);
+    $transaction.mockClear();
+
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        OrdersService,
+        { provide: PrismaService, useValue: { $transaction } },
+        { provide: CustomersService, useValue: {} },
+      ],
+    }).compile();
+    service = moduleRef.get(OrdersService);
+  });
+
+  it('marca deletedAt só em pedido ativo e decrementa o cliente uma vez', async () => {
+    await expect(service.remove('o1')).resolves.toBeUndefined();
+
+    expect($transaction).toHaveBeenCalledTimes(1);
+    expect(updateManyAndReturn).toHaveBeenCalledWith({
+      where: { id: 'o1', deletedAt: null },
+      data: { deletedAt: expect.any(Date) as unknown },
+      select: { customerId: true },
+    });
+    expect(customerUpdate).toHaveBeenCalledTimes(1);
+    expect(customerUpdate).toHaveBeenCalledWith({
+      where: { id: customer.id },
+      data: { ordersCount: { decrement: 1 } },
+    });
+  });
+
+  it('retorna 404 sem decrementar quando o pedido não existe ou já foi excluído', async () => {
+    updateManyAndReturn.mockResolvedValue([]);
+
+    await expect(service.remove('o1')).rejects.toThrow(
+      new NotFoundException(ORDER_NOT_FOUND_MESSAGE),
+    );
+    expect(customerUpdate).not.toHaveBeenCalled();
+  });
+});

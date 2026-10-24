@@ -2,7 +2,10 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -13,6 +16,7 @@ import {
   ApiBadRequestResponse,
   ApiConflictResponse,
   ApiCreatedResponse,
+  ApiNoContentResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -23,6 +27,7 @@ import { Auth } from '../../common/decorators/auth.decorator.js';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
 import { ErrorResponseDto } from '../../common/dto/error-response.dto.js';
 import type { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface.js';
+import { Role } from '../../generated/prisma/enums.js';
 import { CreateOrderDto } from './dto/create-order.dto.js';
 import { ListOrdersQueryDto } from './dto/list-orders-query.dto.js';
 import {
@@ -37,12 +42,12 @@ const OrderIdPipe = new ParseUUIDPipe({
 });
 
 @ApiTags('Orders')
-@Auth()
 @Controller('orders')
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
   @Post()
+  @Auth()
   @ApiOperation({
     summary: 'Cria um pedido',
     description:
@@ -69,6 +74,7 @@ export class OrdersController {
   }
 
   @Get()
+  @Auth()
   @ApiOperation({
     summary: 'Lista pedidos ativos',
     description:
@@ -88,6 +94,7 @@ export class OrdersController {
   }
 
   @Get(':id')
+  @Auth()
   @ApiOperation({
     summary: 'Consulta um pedido ativo',
     description: 'ADMIN ou USER. Pedidos excluídos logicamente retornam 404.',
@@ -110,6 +117,7 @@ export class OrdersController {
   }
 
   @Patch(':id')
+  @Auth()
   @ApiOperation({
     summary: 'Edita um pedido ativo',
     description:
@@ -138,5 +146,27 @@ export class OrdersController {
     @Body() dto: UpdateOrderDto,
   ): Promise<OrderDataResponseDto> {
     return this.ordersService.update(id, dto);
+  }
+
+  @Delete(':id')
+  @Auth(Role.ADMIN)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'Exclui um pedido (exclusão lógica)',
+    description:
+      'Somente ADMIN. Marca o pedido como excluído (deletedAt), sem apagar o registro, e decrementa a contagem de pedidos do cliente. O pedido deixa de aparecer na listagem e na consulta, não pode mais ser editado e o número continua reservado.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiNoContentResponse({ description: 'Pedido excluído. Sem corpo.' })
+  @ApiBadRequestResponse({
+    description: 'id não é um UUID válido.',
+    type: ErrorResponseDto,
+  })
+  @ApiNotFoundResponse({
+    description: 'Pedido inexistente ou já excluído.',
+    type: ErrorResponseDto,
+  })
+  remove(@Param('id', OrderIdPipe) id: string): Promise<void> {
+    return this.ordersService.remove(id);
   }
 }

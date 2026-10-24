@@ -171,4 +171,20 @@ describe('Swagger', () => {
       },
     });
   });
+
+  it('documenta DELETE /orders/{id} apenas para ADMIN', () => {
+    const operation = document.paths['/orders/{id}']?.delete;
+
+    expect(operation?.security).toEqual([{ bearer: [] }]);
+    expect(Object.keys(operation?.responses ?? {}).sort()).toEqual([
+      '204',
+      '400',
+      '401',
+      '403',
+      '404',
+    ]);
+    expect(operation?.responses['403']).toMatchObject({
+      description: 'Acesso permitido apenas para: ADMIN.',
+    });
+  });
 });

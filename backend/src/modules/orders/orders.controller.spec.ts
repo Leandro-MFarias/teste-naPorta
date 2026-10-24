@@ -356,3 +356,80 @@ describe('GET /orders/:id e PATCH /orders/:id', () => {
     expect(update).not.toHaveBeenCalled();
   });
 });
+
+describe('DELETE /orders/:id', () => {
+  const ORDER_ID = '00000000-0000-4000-8000-0000000000a1';
+  const ADMIN_ID = '00000000-0000-4000-8000-000000000001';
+  const remove = vi.fn<(id: string) => Promise<void>>();
+  const findUnique = vi.fn(({ where }: { where: { id: string } }) =>
+    Promise.resolve({
+      id: where.id,
+      role: where.id === ADMIN_ID ? 'ADMIN' : 'USER',
+      isActive: true,
+    }),
+  );
+  let app: INestApplication;
+  let baseUrl: string;
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      controllers: [OrdersController],
+      providers: [
+        { provide: OrdersService, useValue: { remove } },
+        { provide: JwtService, useValue: testJwtService },
+        { provide: PrismaService, useValue: { user: { findUnique } } },
+        { provide: APP_GUARD, useClass: JwtAuthGuard },
+        { provide: APP_GUARD, useClass: RolesGuard },
+      ],
+    }).compile();
+
+    app = moduleRef.createNestApplication({ logger: false });
+    configureApp(app);
+    await app.listen(0);
+    baseUrl = await app.getUrl();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(() => {
+    remove.mockReset().mockResolvedValue(undefined);
+  });
+
+  async function del(id: string, userId?: string) {
+    const headers: Record<string, string> = {};
+    if (userId) {
+      const token = await testJwtService.signAsync({
+        sub: userId,
+        role: userId === ADMIN_ID ? 'ADMIN' : 'USER',
+      });
+      headers.authorization = `Bearer ${token}`;
+    }
+    const res = await fetch(`${baseUrl}/orders/${id}`, {
+      method: 'DELETE',
+      headers,
+    });
+    return { status: res.status, text: await res.text() };
+  }
+
+  it('retorna 401 sem token', async () => {
+    expect((await del(ORDER_ID)).status).toBe(401);
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('retorna 403 para USER', async () => {
+    expect((await del(ORDER_ID, USER_ID)).status).toBe(403);
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('ADMIN exclui e recebe 204 sem corpo', async () => {
+    expect(await del(ORDER_ID, ADMIN_ID)).toEqual({ status: 204, text: '' });
+    expect(remove).toHaveBeenCalledWith(ORDER_ID);
+  });
+
+  it('rejeita id que não é UUID', async () => {
+    expect((await del('abc', ADMIN_ID)).status).toBe(400);
+    expect(remove).not.toHaveBeenCalled();
+  });
+});

@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { TEST_JWT_SECRET } from '../test/auth.js';
 import { HealthModule } from './health/health.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
+import { OrdersModule } from './modules/orders/orders.module.js';
 import { UsersModule } from './modules/users/users.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { PrismaService } from './prisma/prisma.service.js';
@@ -26,6 +27,7 @@ describe('Swagger', () => {
         PrismaModule,
         AuthModule,
         UsersModule,
+        OrdersModule,
         HealthModule,
       ],
     })
@@ -102,5 +104,23 @@ describe('Swagger', () => {
     });
     expect(document.components?.schemas).toHaveProperty('CreateUserDto');
     expect(document.components?.schemas).toHaveProperty('UserDataResponseDto');
+  });
+
+  it('documenta POST /orders para ADMIN e USER, sem 403', () => {
+    const operation = document.paths['/orders']?.post;
+
+    expect(operation?.tags).toEqual(['Orders']);
+    expect(operation?.security).toEqual([{ bearer: [] }]);
+    expect(Object.keys(operation?.responses ?? {}).sort()).toEqual([
+      '201',
+      '400',
+      '401',
+      '409',
+    ]);
+    expect(document.components?.schemas).toHaveProperty('CreateOrderDto');
+    expect(document.components?.schemas).toHaveProperty('OrderDataResponseDto');
+    expect(document.components?.schemas?.OrderDataResponseDto).toMatchObject({
+      required: ['data'],
+    });
   });
 });

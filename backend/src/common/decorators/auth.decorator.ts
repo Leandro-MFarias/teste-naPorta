@@ -17,18 +17,24 @@ export const ROLES_KEY = 'roles';
  * Ex.: `@Auth(Role.ADMIN)` ou `@Auth()` para ADMIN e USER.
  */
 export function Auth(...roles: Role[]): MethodDecorator & ClassDecorator {
-  const access = roles.length > 0 ? roles.join(', ') : 'ADMIN, USER';
-
-  return applyDecorators(
+  const decorators = [
     SetMetadata(ROLES_KEY, roles),
     ApiBearerAuth(),
     ApiUnauthorizedResponse({
       description: 'Token ausente, inválido ou expirado.',
       type: ErrorResponseDto,
     }),
-    ApiForbiddenResponse({
-      description: `Acesso permitido apenas para: ${access}.`,
-      type: ErrorResponseDto,
-    }),
-  );
+  ];
+
+  // Sem papéis, qualquer usuário autenticado acessa: não há 403.
+  if (roles.length > 0) {
+    decorators.push(
+      ApiForbiddenResponse({
+        description: `Acesso permitido apenas para: ${roles.join(', ')}.`,
+        type: ErrorResponseDto,
+      }),
+    );
+  }
+
+  return applyDecorators(...decorators);
 }

@@ -14,10 +14,11 @@ import { PasswordService } from './password.service.js';
 
 export const INVALID_CREDENTIALS_MESSAGE = 'Email ou senha inválidos.';
 
-// Hash bcrypt de uma senha aleatória, usado quando o email não existe para
-// que a resposta leve o mesmo tempo e não revele quais emails existem.
+// Hash Argon2id (mesmos parâmetros do PasswordService) de uma senha
+// aleatória, usado quando o email não existe para que a resposta leve o
+// mesmo tempo e não revele quais emails existem.
 const DUMMY_PASSWORD_HASH =
-  '$2b$12$jHJasYphTSdzdguSQcjC3uCzmmr3gBAwAE7Tscc4QjRGVvWuGQmeu';
+  '$argon2id$v=19$m=19456,p=1,t=2$z9VnnvK61SKsaYpcA1qsoQ$+4c+r7DKYG7oV3PlFHYtWTVk5D8rHUvBYu6MA1g70io';
 
 @Injectable()
 export class AuthService {

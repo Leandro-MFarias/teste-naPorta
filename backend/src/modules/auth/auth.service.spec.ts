@@ -2,7 +2,6 @@ import { UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
-import bcrypt from 'bcrypt';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { testJwtService } from '../../../test/auth.js';
 import type { User } from '../../generated/prisma/client.js';
@@ -21,8 +20,7 @@ describe('AuthService', () => {
       id: '6f1c1c1e-8a52-4a63-9a39-1d2f0f5d8a10',
       name: 'Maria Souza',
       email: 'maria.souza@example.com',
-      // Custo baixo apenas para o teste ser rápido.
-      passwordHash: await bcrypt.hash('SenhaForte123', 4),
+      passwordHash: await new PasswordService().hash('SenhaForte123'),
       role: 'USER',
       isActive: true,
       createdAt: new Date('2026-10-21T12:00:00.000Z'),
@@ -105,10 +103,10 @@ describe('AuthService', () => {
     await expect(
       service.login({ email: 'ninguem@example.com', password: 'qualquer1' }),
     ).rejects.toThrow(new UnauthorizedException(INVALID_CREDENTIALS_MESSAGE));
-    // Mesmo custo de bcrypt do caso de email existente (evita enumeração).
+    // Mesmo custo do caso de email existente (evita enumeração).
     expect(verify).toHaveBeenCalledWith(
       'qualquer1',
-      expect.stringMatching(/^\$2b\$12\$/),
+      expect.stringMatching(/^\$argon2id\$v=19\$m=19456,p=1,t=2\$/),
     );
   });
 });

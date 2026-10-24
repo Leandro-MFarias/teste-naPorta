@@ -18,8 +18,9 @@ import type { UserRequest } from '../interfaces/user-request.interface.js';
 export const USER_NAME_MAX_LENGTH = 150;
 export const EMAIL_MAX_LENGTH = 254;
 export const PASSWORD_MIN_LENGTH = 8;
-// O bcrypt considera apenas os primeiros 72 bytes da senha.
-export const PASSWORD_MAX_LENGTH = 72;
+// O Argon2 não trunca a senha; o limite evita custo excessivo com entradas
+// enormes.
+export const PASSWORD_MAX_LENGTH = 128;
 
 export class CreateUserDto implements UserRequest {
   @ApiProperty({ maxLength: USER_NAME_MAX_LENGTH, example: 'Maria Souza' })

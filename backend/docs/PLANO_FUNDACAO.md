@@ -44,7 +44,9 @@ O projeto deve ser **API First**.
 -   **Banco de dados:** PostgreSQL.
 -   **ORM:** Prisma.
 -   **Autenticação:** JWT Bearer.
--   **Hash de senha:** bcrypt ou biblioteca equivalente segura.
+-   **Hash de senha:** Argon2id (pacote `argon2`), com os parâmetros
+    recomendados pela OWASP: 19 MiB de memória, 2 iterações e
+    paralelismo 1.
 -   **Testes:** Vitest (ver seção 17).
 -   **Validação:** `class-validator` e `class-transformer`, integrados
     ao NestJS.
@@ -383,7 +385,11 @@ export interface UserRequest {
 O endpoint de criação é exclusivo para `ADMIN`; não existe cadastro
 público. O papel solicitado deve ser validado contra os valores
 permitidos. A senha precisa cumprir uma política mínima documentada e
-ser transformada em hash antes de persistir.
+ser transformada em hash (Argon2id) antes de persistir.
+
+Política de senha: de 8 a 128 caracteres, com pelo menos uma letra e um
+número. O Argon2id não trunca a senha; o limite de 128 apenas evita
+custo excessivo com entradas enormes.
 
 ### 9.2 UserResponse
 
@@ -746,7 +752,8 @@ ou da aplicação.
 -   Validar email, senha, UUID, datas, enum de status, CPF/CNPJ, número do
     pedido, itens e preços.
 -   Normalizar email e documento (CPF/CNPJ) antes de persistir.
--   Hash de senha com bcrypt ou solução equivalente segura.
+-   Hash de senha com Argon2id (ver seção 3); nunca armazenar a senha em
+    texto puro.
 -   Não expor `passwordHash` nem outros campos internos.
 -   Não confiar no papel ou ID do criador enviados no body.
 -   Usar consultas parametrizadas via Prisma.

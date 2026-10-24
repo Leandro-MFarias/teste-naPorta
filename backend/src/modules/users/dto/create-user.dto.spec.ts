@@ -32,7 +32,7 @@ describe('CreateUserDto', () => {
     ['curta', 'Ab1'],
     ['sem número', 'SenhaSemNumero'],
     ['sem letra', '1234567890'],
-    ['acima de 72 caracteres', `a1${'x'.repeat(71)}`],
+    ['acima de 128 caracteres', `a1${'x'.repeat(127)}`],
   ])('rejeita senha %s', async (_, password) => {
     const { errors } = await validateDto(CreateUserDto, { ...valid, password });
 

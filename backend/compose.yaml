@@ -1,5 +1,14 @@
 name: naporta
 
+# Valores vêm do arquivo passado em --env-file (ex.: .env.development).
+# - `npm run db:up`     sobe só o PostgreSQL (API local com start:dev);
+# - `npm run docker:up` sobe PostgreSQL, aplica migrations e sobe a API
+#   (serviços do profile "app").
+
+x-app-environment: &app-environment
+  # Dentro da rede do Compose o banco é o host "db", porta 5432.
+  DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?schema=public
+
 services:
   db:
     image: postgres:18-alpine
@@ -19,6 +28,39 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # Aplica as migrations versionadas (prisma migrate deploy) e termina.
+  # Também executa o seed: `npm run docker:seed`.
+  migrate:
+    profiles: [app]
+    build:
+      context: .
+      target: migrator
+    environment:
+      <<: *app-environment
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    profiles: [app]
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    environment:
+      <<: *app-environment
+      NODE_ENV: production
+      PORT: 3000
+      JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET no arquivo de ambiente}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-5h}
+    ports:
+      - '${API_PORT:-3000}:3000'
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   postgres-data:

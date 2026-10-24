@@ -16,6 +16,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Trim } from '../../../common/decorators/trim.decorator.js';
+import { IsCpfOrCnpj } from '../../customers/is-cpf-or-cnpj.validator.js';
 import type {
   CreateOrderRequest,
   CustomerRequest,
@@ -59,11 +60,7 @@ export class CustomerDto implements CustomerRequest {
   @MaxLength(DOCUMENT_INPUT_MAX_LENGTH, {
     message: `document deve ter no máximo ${DOCUMENT_INPUT_MAX_LENGTH} caracteres`,
   })
-  // Formato básico; dígitos verificadores são validados na regra de cliente.
-  @Matches(/^[0-9A-Za-z./\-\s]+$/, {
-    message:
-      'document deve conter apenas letras, números e pontuação de CPF/CNPJ',
-  })
+  @IsCpfOrCnpj({ message: 'document deve ser um CPF ou CNPJ válido' })
   document: string;
 }
 

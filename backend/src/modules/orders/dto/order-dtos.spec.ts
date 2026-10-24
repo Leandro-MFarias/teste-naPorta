@@ -80,6 +80,22 @@ describe('CreateOrderDto', () => {
     },
   );
 
+  it.each([
+    '529.982.247-24',
+    '11.222.333/0001-82',
+    '529;982',
+    '111.111.111-11',
+  ])('rejeita documento inválido %s', async (document) => {
+    const { errors } = await validateDto(CreateOrderDto, {
+      ...validOrder,
+      customer: { name: 'João', document },
+    });
+
+    expect(errors).toContain(
+      'customer.document deve ser um CPF ou CNPJ válido',
+    );
+  });
+
   it('rejeita documento com caracteres inválidos e cliente ausente', async () => {
     const invalidDocument = await validateDto(CreateOrderDto, {
       ...validOrder,

@@ -1,8 +1,8 @@
 name: naporta
 
 # Valores vêm do arquivo passado em --env-file (ex.: .env.development).
-# - `npm run db:up`     sobe só o PostgreSQL (API local com start:dev);
-# - `npm run docker:up` sobe PostgreSQL, aplica migrations e sobe a API
+# - `npm run db:up`     sobe o PostgreSQL e o Mailpit (API local com start:dev);
+# - `npm run docker:up` sobe também as migrations e a API
 #   (serviços do profile "app").
 
 x-app-environment: &app-environment
@@ -25,6 +25,20 @@ services:
     healthcheck:
       test:
         ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Servidor SMTP de desenvolvimento: captura os emails enviados pela API
+  # (nada sai para a internet). Interface web: http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:v1.31
+    restart: unless-stopped
+    ports:
+      - '${MAILPIT_SMTP_PORT:-1025}:1025'
+      - '${MAILPIT_UI_PORT:-8025}:8025'
+    healthcheck:
+      test: ['CMD', '/mailpit', 'readyz']
       interval: 5s
       timeout: 5s
       retries: 10
@@ -55,6 +69,12 @@ services:
       JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET no arquivo de ambiente}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-5h}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      MAIL_FROM: ${MAIL_FROM:-naPorta <no-reply@naporta.local>}
+      # Mailpit do Compose. Para um SMTP real, ajuste estas variáveis.
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      SMTP_SECURE: 'false'
     ports:
       - '${API_PORT:-3333}:3333'
     depends_on:
@@ -62,6 +82,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      mailpit:
+        condition: service_healthy
 
 volumes:
   postgres-data:

@@ -1,4 +1,12 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import {
   apiClient,
   createTestApp,
@@ -12,6 +20,11 @@ const CPF_A = '52998224725';
 const CPF_B = '11144477735';
 const CNPJ_C = '12ABC34501DE35';
 
+/** Email fictício e estável por documento. */
+function emailFor(document: string): string {
+  return `${document.toLowerCase()}@cliente.test`;
+}
+
 function orderPayload(
   orderNumber: string,
   document = CPF_A,
@@ -21,7 +34,7 @@ function orderPayload(
     orderNumber,
     expectedDeliveryDate: '2026-11-15',
     deliveryAddress: 'Rua das Flores, 123',
-    customer: { name, document },
+    customer: { name, document, email: emailFor(document) },
     items: [
       { description: 'Caixa de som', price: 199.9 },
       { description: 'Cabo', price: 0.1 },
@@ -54,6 +67,7 @@ describe('Pedidos (integração)', () => {
       ctx.baseUrl,
       await login(ctx.baseUrl, 'admin@test.com'),
     );
+    ctx.mail.reset();
   });
 
   async function ordersCount(document: string): Promise<number | undefined> {
@@ -77,7 +91,11 @@ describe('Pedidos (integração)', () => {
     it('persiste pedido, itens, cliente e criador relacionados', async () => {
       const res = await asUser('POST', '/orders', {
         ...orderPayload('PED-1'),
-        customer: { name: 'Cliente A', document: '529.982.247-25' },
+        customer: {
+          name: 'Cliente A',
+          document: '529.982.247-25',
+          email: emailFor(CPF_A),
+        },
       });
 
       expect(res.status).toBe(201);
@@ -112,7 +130,11 @@ describe('Pedidos (integração)', () => {
 
       const res = await asUser('POST', '/orders', {
         ...orderPayload('PED-2'),
-        customer: { name: 'Cliente A Atualizado', document: CPF_A },
+        customer: {
+          name: 'Cliente A Atualizado',
+          document: CPF_A,
+          email: emailFor(CPF_A),
+        },
       });
 
       expect(res.status).toBe(201);
@@ -234,7 +256,11 @@ describe('Pedidos (integração)', () => {
 
       const res = await asUser('PATCH', `/orders/${id}`, {
         orderNumber: 'PED-2',
-        customer: { name: 'Empresa C', document: CNPJ_C },
+        customer: {
+          name: 'Empresa C',
+          document: CNPJ_C,
+          email: emailFor(CNPJ_C),
+        },
         items: [{ description: 'Novo', price: 1 }],
       });
 
@@ -279,7 +305,11 @@ describe('Pedidos (integração)', () => {
       await create('PED-2');
 
       const res = await asUser('PATCH', `/orders/${id}`, {
-        customer: { name: 'Empresa C', document: CNPJ_C.toLowerCase() },
+        customer: {
+          name: 'Empresa C',
+          document: CNPJ_C.toLowerCase(),
+          email: emailFor(CNPJ_C),
+        },
       });
 
       expect(res.status).toBe(200);
@@ -300,6 +330,140 @@ describe('Pedidos (integração)', () => {
       });
 
       expect(res.status).toBe(409);
+    });
+  });
+
+  describe('notificações por email ao cliente', () => {
+    // O envio acontece em segundo plano, depois da resposta HTTP.
+    async function sentEmails(count: number) {
+      await vi.waitFor(() => expect(ctx.mail.sent).toHaveLength(count));
+      // Garante que nenhum email extra chegou atrasado.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return ctx.mail.sent.map((m) => [m.to, m.subject]);
+    }
+
+    it('cliente novo e novo pedido de cliente existente', async () => {
+      await create('PED-1');
+      await create('PED-2');
+
+      expect(await sentEmails(2)).toEqual([
+        [emailFor(CPF_A), 'Pedido PED-1 recebido'],
+        [emailFor(CPF_A), 'Pedido PED-2 recebido'],
+      ]);
+      expect(ctx.mail.sent[0].text).toContain('Seu cadastro foi criado');
+      expect(ctx.mail.sent[1].text).toContain('Recebemos um novo pedido');
+      expect(ctx.mail.sent[1].text).toMatch(/Total: R\$\s200,00/);
+    });
+
+    it('cada mudança de status gera um email; edição sem mudança de status não', async () => {
+      const id = await create('PED-1');
+      ctx.mail.reset();
+
+      await asUser('PATCH', `/orders/${id}`, { status: 'CONFIRMED' });
+      await asUser('PATCH', `/orders/${id}`, {
+        deliveryAddress: 'Outra rua, 1',
+      });
+      await asUser('PATCH', `/orders/${id}`, { status: 'CONFIRMED' });
+
+      expect(await sentEmails(1)).toEqual([
+        [emailFor(CPF_A), 'Pedido PED-1: Confirmado'],
+      ]);
+      expect(ctx.mail.sent[0].text).toContain(
+        'mudou de "Pendente" para "Confirmado"',
+      );
+    });
+
+    it('troca de cliente avisa só o novo cliente', async () => {
+      const id = await create('PED-1');
+      ctx.mail.reset();
+
+      await asUser('PATCH', `/orders/${id}`, {
+        status: 'CONFIRMED',
+        customer: {
+          name: 'Empresa C',
+          document: CNPJ_C,
+          email: emailFor(CNPJ_C),
+        },
+      });
+
+      expect(await sentEmails(1)).toEqual([
+        [emailFor(CNPJ_C), 'Pedido PED-1 recebido'],
+      ]);
+      expect(ctx.mail.sent[0].text).toContain('foi vinculado ao seu cadastro');
+    });
+
+    it('novo email do cliente é gravado, avisado e usado no envio', async () => {
+      await create('PED-1');
+
+      const res = await asUser('POST', '/orders', {
+        ...orderPayload('PED-2'),
+        customer: {
+          name: 'Cliente A',
+          document: CPF_A,
+          email: 'Novo.Email@Cliente.test',
+        },
+      });
+
+      expect(res.body.warnings).toEqual([
+        {
+          code: 'CUSTOMER_EMAIL_UPDATED',
+          message: 'CPF já cadastrado. O email do cliente foi atualizado.',
+        },
+      ]);
+      expect(res.body.data.customer.email).toBe('novo.email@cliente.test');
+      expect((await sentEmails(2))[1]).toEqual([
+        'novo.email@cliente.test',
+        'Pedido PED-2 recebido',
+      ]);
+    });
+
+    it('falha no envio não afeta o pedido', async () => {
+      ctx.mail.failWith = new Error('SMTP indisponível');
+
+      const res = await asUser('POST', '/orders', orderPayload('PED-1'));
+
+      expect(res.status).toBe(201);
+      expect(await ctx.prisma.order.count()).toBe(1);
+    });
+
+    it('pedido rejeitado não envia email', async () => {
+      await create('PED-1');
+      ctx.mail.reset();
+
+      const res = await asUser('POST', '/orders', orderPayload('PED-1'));
+
+      expect(res.status).toBe(409);
+      expect(await sentEmails(0)).toEqual([]);
+    });
+
+    it('cliente antigo sem email não recebe notificação', async () => {
+      const id = await create('PED-1');
+      await ctx.prisma.customer.update({
+        where: { document: CPF_A },
+        data: { email: null },
+      });
+      ctx.mail.reset();
+
+      const res = await asUser('PATCH', `/orders/${id}`, {
+        status: 'CONFIRMED',
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.customer.email).toBeNull();
+      expect(await sentEmails(0)).toEqual([]);
+    });
+
+    it('POST /orders exige o email do cliente', async () => {
+      const payload = orderPayload('PED-1');
+      const res = await asUser('POST', '/orders', {
+        ...payload,
+        customer: { name: 'Cliente A', document: CPF_A },
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toContain(
+        'customer.email deve ser um email válido',
+      );
     });
   });
 

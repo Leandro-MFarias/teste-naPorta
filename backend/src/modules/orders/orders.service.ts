@@ -11,8 +11,11 @@ import type {
   PaginatedResponse,
 } from '../../common/interfaces/api-response.interface.js';
 import { Prisma } from '../../generated/prisma/client.js';
+import type { OrderStatus } from '../../generated/prisma/enums.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { CustomersService } from '../customers/customers.service.js';
+import { MailService } from '../mail/mail.service.js';
+import type { OrderCreatedReason } from '../mail/templates/order-emails.js';
 import type {
   CreateOrderRequest,
   ListOrdersQuery,
@@ -35,20 +38,24 @@ export class OrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly customers: CustomersService,
+    private readonly mail: MailService,
   ) {}
 
   /**
    * Cria o pedido (status inicial PENDING) em uma única transação:
    * cria/reutiliza o cliente, grava pedido e itens e incrementa
-   * ordersCount. Qualquer falha desfaz todas as alterações.
+   * ordersCount. Qualquer falha desfaz todas as alterações. Após o commit,
+   * o cliente recebe o email do pedido.
    */
   async create(
     request: CreateOrderRequest,
     user: AuthenticatedUser,
   ): Promise<ApiResponse<OrderResponse>> {
+    let response: ApiResponse<OrderResponse>;
+    let reason: OrderCreatedReason;
     try {
-      return await this.prisma.$transaction(async (tx) => {
-        const { customer, warning } = await this.customers.resolve(
+      ({ response, reason } = await this.prisma.$transaction(async (tx) => {
+        const { customer, created, warnings } = await this.customers.resolve(
           tx,
           request.customer,
         );
@@ -72,13 +79,21 @@ export class OrdersService {
         });
 
         return {
-          data: toOrderResponse({ ...order, customer: updatedCustomer }),
-          ...(warning && { warnings: [warning] }),
+          response: withWarnings(
+            toOrderResponse({ ...order, customer: updatedCustomer }),
+            warnings,
+          ),
+          reason: created ? 'NEW_CUSTOMER' : 'NEW_ORDER',
         };
-      });
+      }));
     } catch (error) {
       throw toOrderNumberConflict(error);
     }
+
+    // Só depois do commit: nunca avisar sobre um pedido desfeito. O envio
+    // roda em segundo plano e uma falha não afeta a resposta.
+    void this.mail.notifyOrderCreated(response.data, reason);
+    return response;
   }
 
   /** Pedido ativo por ID; excluídos logicamente retornam 404. */
@@ -97,84 +112,103 @@ export class OrdersService {
    * Edição parcial (seção 11), toda em uma transação: campos omitidos não
    * mudam; `items` substitui todos os itens; status só muda por transição
    * permitida; troca de cliente ajusta ordersCount dos dois clientes.
+   * Após o commit, o cliente é avisado da mudança de status ou, se o
+   * pedido passou para outro cliente, o novo cliente recebe o pedido.
    */
   async update(
     id: string,
     request: UpdateOrderRequest,
   ): Promise<ApiResponse<OrderResponse>> {
+    let response: ApiResponse<OrderResponse>;
+    let previousStatus: OrderStatus;
+    let customerChanged: boolean;
     try {
-      return await this.prisma.$transaction(async (tx) => {
-        // Bloqueia a linha até o fim da transação: edições e exclusões
-        // concorrentes do mesmo pedido esperam, em vez de validar a
-        // transição ou a contagem sobre um estado desatualizado.
-        const locked = await tx.$queryRaw<{ id: string }[]>`
+      ({ response, previousStatus, customerChanged } =
+        await this.prisma.$transaction(async (tx) => {
+          // Bloqueia a linha até o fim da transação: edições e exclusões
+          // concorrentes do mesmo pedido esperam, em vez de validar a
+          // transição ou a contagem sobre um estado desatualizado.
+          const locked = await tx.$queryRaw<{ id: string }[]>`
           SELECT id FROM orders
           WHERE id = ${id}::uuid AND deleted_at IS NULL
           FOR UPDATE`;
-        if (locked.length === 0) {
-          throw new NotFoundException(ORDER_NOT_FOUND_MESSAGE);
-        }
-        const current = await tx.order.findUniqueOrThrow({ where: { id } });
-
-        // Reenviar o status atual não é transição: é ignorado.
-        if (
-          request.status !== undefined &&
-          request.status !== current.status &&
-          !canTransition(current.status, request.status)
-        ) {
-          throw new BadRequestException(
-            invalidTransitionMessage(current.status, request.status),
-          );
-        }
-
-        let customerId = current.customerId;
-        let warning: ApiWarning | undefined;
-        if (request.customer) {
-          const resolved = await this.customers.resolve(tx, request.customer);
-          warning = resolved.warning;
-          customerId = resolved.customer.id;
-
-          if (customerId !== current.customerId) {
-            // O CHECK orders_count >= 0 do banco impede contagem negativa.
-            await tx.customer.update({
-              where: { id: current.customerId },
-              data: { ordersCount: { decrement: 1 } },
-            });
-            await tx.customer.update({
-              where: { id: customerId },
-              data: { ordersCount: { increment: 1 } },
-            });
+          if (locked.length === 0) {
+            throw new NotFoundException(ORDER_NOT_FOUND_MESSAGE);
           }
-        }
+          const current = await tx.order.findUniqueOrThrow({ where: { id } });
 
-        const order = await tx.order.update({
-          where: { id },
-          data: {
-            orderNumber: request.orderNumber,
-            expectedDeliveryDate:
-              request.expectedDeliveryDate !== undefined
-                ? toDateOnly(request.expectedDeliveryDate)
-                : undefined,
-            deliveryAddress: request.deliveryAddress,
-            status: request.status,
-            customerId,
-            // Explícito para que mudanças só nos itens também atualizem.
-            updatedAt: new Date(),
-            ...(request.items && {
-              items: { deleteMany: {}, create: request.items.map(toItemData) },
-            }),
-          },
-          include: ORDER_INCLUDE,
-        });
+          // Reenviar o status atual não é transição: é ignorado.
+          if (
+            request.status !== undefined &&
+            request.status !== current.status &&
+            !canTransition(current.status, request.status)
+          ) {
+            throw new BadRequestException(
+              invalidTransitionMessage(current.status, request.status),
+            );
+          }
 
-        return {
-          data: toOrderResponse(order),
-          ...(warning && { warnings: [warning] }),
-        };
-      });
+          let customerId = current.customerId;
+          let warnings: ApiWarning[] = [];
+          if (request.customer) {
+            const resolved = await this.customers.resolve(tx, request.customer);
+            warnings = resolved.warnings;
+            customerId = resolved.customer.id;
+
+            if (customerId !== current.customerId) {
+              // O CHECK orders_count >= 0 do banco impede contagem negativa.
+              await tx.customer.update({
+                where: { id: current.customerId },
+                data: { ordersCount: { decrement: 1 } },
+              });
+              await tx.customer.update({
+                where: { id: customerId },
+                data: { ordersCount: { increment: 1 } },
+              });
+            }
+          }
+
+          const order = await tx.order.update({
+            where: { id },
+            data: {
+              orderNumber: request.orderNumber,
+              expectedDeliveryDate:
+                request.expectedDeliveryDate !== undefined
+                  ? toDateOnly(request.expectedDeliveryDate)
+                  : undefined,
+              deliveryAddress: request.deliveryAddress,
+              status: request.status,
+              customerId,
+              // Explícito para que mudanças só nos itens também atualizem.
+              updatedAt: new Date(),
+              ...(request.items && {
+                items: {
+                  deleteMany: {},
+                  create: request.items.map(toItemData),
+                },
+              }),
+            },
+            include: ORDER_INCLUDE,
+          });
+
+          return {
+            response: withWarnings(toOrderResponse(order), warnings),
+            previousStatus: current.status,
+            customerChanged: customerId !== current.customerId,
+          };
+        }));
     } catch (error) {
       throw toOrderNumberConflict(error);
     }
+
+    // Só depois do commit. O novo cliente recebe o pedido completo (com o
+    // status atual), então não recebe também o aviso de status.
+    if (customerChanged) {
+      void this.mail.notifyOrderCreated(response.data, 'ASSIGNED');
+    } else if (response.data.status !== previousStatus) {
+      void this.mail.notifyOrderStatusChanged(response.data, previousStatus);
+    }
+    return response;
   }
 
   /**
@@ -248,6 +282,14 @@ export class OrdersService {
       },
     };
   }
+}
+
+/** Inclui `warnings` na resposta apenas quando houver aviso. */
+function withWarnings(
+  data: OrderResponse,
+  warnings: ApiWarning[],
+): ApiResponse<OrderResponse> {
+  return warnings.length > 0 ? { data, warnings } : { data };
 }
 
 /**

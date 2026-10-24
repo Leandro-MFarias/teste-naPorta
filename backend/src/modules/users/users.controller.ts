@@ -4,6 +4,7 @@ import {
   ApiConflictResponse,
   ApiCreatedResponse,
   ApiOperation,
+  ApiServiceUnavailableResponse,
   ApiTags,
 } from '@nestjs/swagger';
 import { Auth } from '../../common/decorators/auth.decorator.js';
@@ -23,18 +24,23 @@ export class UsersController {
   @ApiOperation({
     summary: 'Cadastra um usuário',
     description:
-      'Exclusivo para ADMIN; não existe cadastro público. O usuário é criado ativo e a senha é armazenada apenas como hash.',
+      'Exclusivo para ADMIN; não existe cadastro público. Não se informa senha: o sistema gera uma senha temporária aleatória, envia ao email do usuário (email de boas-vindas com o botão de acesso) e guarda apenas o hash. O usuário é criado ativo, com `mustChangePassword: true`, e precisa trocar a senha no primeiro login (POST /auth/change-password). Se o email não puder ser enviado, nada é cadastrado (503).',
   })
   @ApiCreatedResponse({
     description: 'Usuário criado.',
     type: UserDataResponseDto,
   })
   @ApiBadRequestResponse({
-    description: 'Dados inválidos (ex.: email, senha fora da política, papel).',
+    description: 'Dados inválidos (ex.: email, papel).',
     type: ErrorResponseDto,
   })
   @ApiConflictResponse({
     description: 'Já existe um usuário com este email.',
+    type: ErrorResponseDto,
+  })
+  @ApiServiceUnavailableResponse({
+    description:
+      'Falha ao enviar o email de boas-vindas; o usuário não foi cadastrado.',
     type: ErrorResponseDto,
   })
   async create(@Body() dto: CreateUserDto): Promise<UserDataResponseDto> {

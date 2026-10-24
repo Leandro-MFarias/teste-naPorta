@@ -13,11 +13,13 @@ import {
 } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { customerNameUpdatedWarning } from '../customers/customer.warnings.js';
+import { MailService } from '../mail/mail.service.js';
 import {
   CustomersService,
   type ResolvedCustomer,
 } from '../customers/customers.service.js';
 import type { CreateOrderRequest } from './interfaces/order-request.interface.js';
+import type { OrderResponse } from './interfaces/order-response.interface.js';
 import {
   escapeLikePattern,
   ORDER_NOT_FOUND_MESSAGE,
@@ -34,6 +36,7 @@ const customer: Customer = {
   id: 'c0000000-0000-4000-8000-000000000001',
   name: 'João da Silva',
   document: '52998224725',
+  email: 'joao@example.com',
   type: 'PERSON',
   ordersCount: 0,
   createdAt: new Date('2026-10-01T12:00:00.000Z'),
@@ -44,7 +47,11 @@ const request: CreateOrderRequest = {
   orderNumber: 'PED-1001',
   expectedDeliveryDate: '2026-11-15',
   deliveryAddress: 'Rua das Flores, 123',
-  customer: { name: 'João da Silva', document: '529.982.247-25' },
+  customer: {
+    name: 'João da Silva',
+    document: '529.982.247-25',
+    email: 'joao@example.com',
+  },
   items: [
     { description: 'Caixa de som', price: 199.9 },
     { description: 'Cabo', price: 0.1 },
@@ -59,6 +66,22 @@ type OrderCreateArgs = {
     items: { create: { description: string; price: Prisma.Decimal }[] };
   };
 };
+
+const notifyOrderCreated = vi.fn<
+  (order: OrderResponse, reason: string) => Promise<void>
+>(() => Promise.resolve());
+const notifyOrderStatusChanged = vi.fn<
+  (order: OrderResponse, previous: string) => Promise<void>
+>(() => Promise.resolve());
+const mailProvider = {
+  provide: MailService,
+  useValue: { notifyOrderCreated, notifyOrderStatusChanged },
+};
+
+beforeEach(() => {
+  notifyOrderCreated.mockClear();
+  notifyOrderStatusChanged.mockClear();
+});
 
 describe('OrdersService.create', () => {
   const resolve =
@@ -76,7 +99,9 @@ describe('OrdersService.create', () => {
   let service: OrdersService;
 
   beforeEach(async () => {
-    resolve.mockReset().mockResolvedValue({ customer });
+    resolve
+      .mockReset()
+      .mockResolvedValue({ customer, created: true, warnings: [] });
     customerUpdate
       .mockReset()
       .mockResolvedValue({ ...customer, ordersCount: 1 });
@@ -105,6 +130,7 @@ describe('OrdersService.create', () => {
         OrdersService,
         { provide: PrismaService, useValue: { $transaction } },
         { provide: CustomersService, useValue: { resolve } },
+        mailProvider,
       ],
     }).compile();
 
@@ -137,6 +163,10 @@ describe('OrdersService.create', () => {
     });
 
     expect(result).not.toHaveProperty('warnings');
+    expect(notifyOrderCreated).toHaveBeenCalledWith(
+      result.data,
+      'NEW_CUSTOMER',
+    );
     expect(result.data).toMatchObject({
       orderNumber: 'PED-1001',
       status: 'PENDING',
@@ -152,11 +182,16 @@ describe('OrdersService.create', () => {
 
   it('inclui o aviso quando o nome do cliente foi atualizado', async () => {
     const warning = customerNameUpdatedWarning('PERSON');
-    resolve.mockResolvedValue({ customer, warning });
+    resolve.mockResolvedValue({
+      customer,
+      created: false,
+      warnings: [warning],
+    });
 
     const result = await service.create(request, USER);
 
     expect(result.warnings).toEqual([warning]);
+    expect(notifyOrderCreated).toHaveBeenCalledWith(result.data, 'NEW_ORDER');
   });
 
   it('converte número de pedido duplicado em 409', async () => {
@@ -171,6 +206,7 @@ describe('OrdersService.create', () => {
       new ConflictException(ORDER_NUMBER_IN_USE_MESSAGE),
     );
     expect(customerUpdate).not.toHaveBeenCalled();
+    expect(notifyOrderCreated).not.toHaveBeenCalled();
   });
 
   it('propaga falhas da regra de cliente sem criar o pedido', async () => {
@@ -230,6 +266,7 @@ describe('OrdersService.findAll', () => {
           useValue: { $transaction, order: { count, findMany } },
         },
         { provide: CustomersService, useValue: {} },
+        mailProvider,
       ],
     }).compile();
 
@@ -319,6 +356,7 @@ describe('OrdersService.findOne', () => {
         OrdersService,
         { provide: PrismaService, useValue: { order: { findFirst } } },
         { provide: CustomersService, useValue: {} },
+        mailProvider,
       ],
     }).compile();
     service = moduleRef.get(OrdersService);
@@ -401,7 +439,9 @@ describe('OrdersService.update', () => {
     queryRaw.mockReset().mockResolvedValue([{ id: ORDER_ID }]);
     findUniqueOrThrow.mockReset().mockResolvedValue(current);
     customerUpdate.mockReset().mockResolvedValue(customer);
-    resolve.mockReset().mockResolvedValue({ customer });
+    resolve
+      .mockReset()
+      .mockResolvedValue({ customer, created: true, warnings: [] });
     orderUpdate.mockReset().mockImplementation(({ data }) =>
       Promise.resolve({
         ...current,
@@ -419,6 +459,7 @@ describe('OrdersService.update', () => {
         OrdersService,
         { provide: PrismaService, useValue: { $transaction } },
         { provide: CustomersService, useValue: { resolve } },
+        mailProvider,
       ],
     }).compile();
     service = moduleRef.get(OrdersService);
@@ -476,27 +517,48 @@ describe('OrdersService.update', () => {
     ).toEqual([['Novo', '9.90']]);
   });
 
-  it('aplica transição permitida', async () => {
-    await service.update(ORDER_ID, { status: 'CONFIRMED' });
+  it('aplica transição permitida e avisa o cliente da mudança de status', async () => {
+    const result = await service.update(ORDER_ID, { status: 'CONFIRMED' });
 
     expect(updateData().status).toBe('CONFIRMED');
+    expect(notifyOrderStatusChanged).toHaveBeenCalledWith(
+      result.data,
+      'PENDING',
+    );
+    expect(notifyOrderCreated).not.toHaveBeenCalled();
   });
 
-  it('aceita reenviar o status atual', async () => {
+  it('aceita reenviar o status atual, sem email', async () => {
     await expect(
       service.update(ORDER_ID, { status: 'PENDING' }),
     ).resolves.toBeDefined();
+    expect(notifyOrderStatusChanged).not.toHaveBeenCalled();
   });
 
-  it('rejeita transição não permitida antes de qualquer escrita', async () => {
+  it('edição sem mudança de status ou de cliente não envia email', async () => {
+    await service.update(ORDER_ID, {
+      deliveryAddress: 'Rua B',
+      items: [{ description: 'Novo', price: 1 }],
+    });
+
+    expect(notifyOrderCreated).not.toHaveBeenCalled();
+    expect(notifyOrderStatusChanged).not.toHaveBeenCalled();
+  });
+
+  it('rejeita transição não permitida antes de qualquer escrita (sem email)', async () => {
     await expect(
       service.update(ORDER_ID, {
         status: 'SHIPPED',
-        customer: { name: 'Empresa X', document: '12ABC34501DE35' },
+        customer: {
+          name: 'Empresa X',
+          document: '12ABC34501DE35',
+          email: 'empresa@example.com',
+        },
       }),
     ).rejects.toThrow(BadRequestException);
     expect(resolve).not.toHaveBeenCalled();
     expect(orderUpdate).not.toHaveBeenCalled();
+    expect(notifyOrderStatusChanged).not.toHaveBeenCalled();
   });
 
   it('rejeita qualquer mudança a partir de status final', async () => {
@@ -508,15 +570,25 @@ describe('OrdersService.update', () => {
   });
 
   it('troca de cliente: decrementa o anterior e incrementa o novo', async () => {
-    resolve.mockResolvedValue({ customer: otherCustomer });
+    resolve.mockResolvedValue({
+      customer: otherCustomer,
+      created: false,
+      warnings: [],
+    });
 
     const result = await service.update(ORDER_ID, {
-      customer: { name: 'Empresa X', document: '12ABC34501DE35' },
+      customer: {
+        name: 'Empresa X',
+        document: '12ABC34501DE35',
+        email: 'empresa@example.com',
+      },
+      status: 'CONFIRMED',
     });
 
     expect(resolve).toHaveBeenCalledWith(tx, {
       name: 'Empresa X',
       document: '12ABC34501DE35',
+      email: 'empresa@example.com',
     });
     expect(customerUpdate.mock.calls).toEqual([
       [
@@ -535,17 +607,25 @@ describe('OrdersService.update', () => {
     expect(updateData().customerId).toBe(otherCustomer.id);
     expect(result.data.customer.id).toBe(otherCustomer.id);
     expect(result).not.toHaveProperty('warnings');
+    // O novo cliente recebe o pedido completo, sem aviso de status extra.
+    expect(notifyOrderCreated).toHaveBeenCalledWith(result.data, 'ASSIGNED');
+    expect(notifyOrderStatusChanged).not.toHaveBeenCalled();
   });
 
   it('mesmo cliente com outro nome: não mexe na contagem e retorna aviso', async () => {
     const warning = customerNameUpdatedWarning('PERSON');
     resolve.mockResolvedValue({
       customer: { ...customer, name: 'João Silva' },
-      warning,
+      created: false,
+      warnings: [warning],
     });
 
     const result = await service.update(ORDER_ID, {
-      customer: { name: 'João Silva', document: '52998224725' },
+      customer: {
+        name: 'João Silva',
+        document: '52998224725',
+        email: 'joao@example.com',
+      },
     });
 
     expect(customerUpdate).not.toHaveBeenCalled();
@@ -591,6 +671,7 @@ describe('OrdersService.remove', () => {
         OrdersService,
         { provide: PrismaService, useValue: { $transaction } },
         { provide: CustomersService, useValue: {} },
+        mailProvider,
       ],
     }).compile();
     service = moduleRef.get(OrdersService);

@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { TEST_JWT_SECRET } from '../test/auth.js';
 import { HealthModule } from './health/health.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
+import { EmailSender } from './modules/mail/email-sender.js';
 import { OrdersModule } from './modules/orders/orders.module.js';
 import { UsersModule } from './modules/users/users.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
@@ -22,7 +23,13 @@ describe('Swagger', () => {
         ConfigModule.forRoot({
           isGlobal: true,
           ignoreEnvFile: true,
-          load: [() => ({ JWT_SECRET: TEST_JWT_SECRET, JWT_EXPIRES_IN: '5h' })],
+          load: [
+            () => ({
+              JWT_SECRET: TEST_JWT_SECRET,
+              JWT_EXPIRES_IN: '5h',
+              FRONTEND_URL: 'http://localhost:3000',
+            }),
+          ],
         }),
         PrismaModule,
         AuthModule,
@@ -32,6 +39,8 @@ describe('Swagger', () => {
       ],
     })
       .overrideProvider(PrismaService)
+      .useValue({})
+      .overrideProvider(EmailSender)
       .useValue({})
       .compile();
 
@@ -98,11 +107,21 @@ describe('Swagger', () => {
       '401',
       '403',
       '409',
+      '503',
     ]);
     expect(operation?.responses['403']).toMatchObject({
       description: 'Acesso permitido apenas para: ADMIN.',
     });
     expect(document.components?.schemas).toHaveProperty('CreateUserDto');
+    expect(
+      Object.keys(
+        (
+          document.components?.schemas?.CreateUserDto as {
+            properties: object;
+          }
+        ).properties,
+      ).sort(),
+    ).toEqual(['email', 'name', 'role']);
     expect(document.components?.schemas).toHaveProperty('UserDataResponseDto');
   });
 
@@ -185,6 +204,35 @@ describe('Swagger', () => {
     ]);
     expect(operation?.responses['403']).toMatchObject({
       description: 'Acesso permitido apenas para: ADMIN.',
+    });
+  });
+
+  it('documenta GET /auth/me e POST /auth/change-password com Bearer', () => {
+    const me = document.paths['/auth/me']?.get;
+    const change = document.paths['/auth/change-password']?.post;
+
+    expect(me?.security).toEqual([{ bearer: [] }]);
+    expect(Object.keys(me?.responses ?? {}).sort()).toEqual(['200', '401']);
+    expect(change?.security).toEqual([{ bearer: [] }]);
+    expect(Object.keys(change?.responses ?? {}).sort()).toEqual([
+      '200',
+      '400',
+      '401',
+    ]);
+    expect(document.components?.schemas).toHaveProperty('ChangePasswordDto');
+    expect(document.components?.schemas?.UserResponseDto).toMatchObject({
+      required: expect.arrayContaining(['mustChangePassword']) as unknown,
+    });
+  });
+
+  it('documenta o email do cliente no pedido', () => {
+    expect(document.components?.schemas?.CustomerDto).toMatchObject({
+      required: ['name', 'document', 'email'],
+    });
+    expect(
+      document.components?.schemas?.OrderCustomerResponseDto,
+    ).toMatchObject({
+      properties: { email: { type: 'string', nullable: true } },
     });
   });
 });

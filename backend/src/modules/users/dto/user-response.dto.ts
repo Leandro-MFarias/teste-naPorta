@@ -19,6 +19,13 @@ export class UserResponseDto implements UserResponse {
   @ApiProperty({ example: true })
   isActive: boolean;
 
+  @ApiProperty({
+    description:
+      'true enquanto o usuário não trocar a senha temporária. Nesse estado, apenas GET /auth/me e POST /auth/change-password são permitidos.',
+    example: false,
+  })
+  mustChangePassword: boolean;
+
   @ApiProperty({ format: 'date-time' })
   createdAt: Date;
 

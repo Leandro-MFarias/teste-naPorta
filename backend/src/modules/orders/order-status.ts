@@ -25,3 +25,13 @@ export function invalidTransitionMessage(
     ? `Transição de status não permitida: ${from} → ${to}. A partir de ${from}, permitido: ${allowed.join(', ')}.`
     : `Transição de status não permitida: ${from} é um status final.`;
 }
+
+/** Nome de cada status para exibição (ex.: emails ao cliente). */
+export const ORDER_STATUS_LABELS: Readonly<Record<OrderStatus, string>> = {
+  PENDING: 'Pendente',
+  CONFIRMED: 'Confirmado',
+  IN_PREPARATION: 'Em preparação',
+  SHIPPED: 'Enviado',
+  DELIVERED: 'Entregue',
+  CANCELED: 'Cancelado',
+};

@@ -42,7 +42,11 @@ describe('POST /orders', () => {
     orderNumber: 'PED-1001',
     expectedDeliveryDate: '2026-11-15',
     deliveryAddress: 'Rua das Flores, 123',
-    customer: { name: 'João da Silva', document: '529.982.247-25' },
+    customer: {
+      name: 'João da Silva',
+      document: '529.982.247-25',
+      email: 'joao@example.com',
+    },
     items: [{ description: 'Caixa de som', price: 199.9 }],
   };
 

@@ -4,9 +4,7 @@ import {
   IsEnum,
   IsNotEmpty,
   IsString,
-  Matches,
   MaxLength,
-  MinLength,
 } from 'class-validator';
 import {
   Trim,
@@ -21,6 +19,8 @@ export const PASSWORD_MIN_LENGTH = 8;
 // O Argon2 não trunca a senha; o limite evita custo excessivo com entradas
 // enormes.
 export const PASSWORD_MAX_LENGTH = 128;
+// Política de senha: pelo menos uma letra e um número.
+export const PASSWORD_POLICY_PATTERN = /^(?=.*\p{L})(?=.*\d)/u;
 
 export class CreateUserDto implements UserRequest {
   @ApiProperty({ maxLength: USER_NAME_MAX_LENGTH, example: 'Maria Souza' })
@@ -33,7 +33,8 @@ export class CreateUserDto implements UserRequest {
   name: string;
 
   @ApiProperty({
-    description: 'Armazenado sem espaços nas extremidades e em minúsculas.',
+    description:
+      'Recebe o email de boas-vindas com a senha temporária. Armazenado sem espaços nas extremidades e em minúsculas.',
     maxLength: EMAIL_MAX_LENGTH,
     example: 'maria.souza@example.com',
   })
@@ -43,25 +44,6 @@ export class CreateUserDto implements UserRequest {
     message: `email deve ter no máximo ${EMAIL_MAX_LENGTH} caracteres`,
   })
   email: string;
-
-  @ApiProperty({
-    description: `Política mínima: de ${PASSWORD_MIN_LENGTH} a ${PASSWORD_MAX_LENGTH} caracteres, com pelo menos uma letra e um número.`,
-    minLength: PASSWORD_MIN_LENGTH,
-    maxLength: PASSWORD_MAX_LENGTH,
-    format: 'password',
-    example: 'SenhaForte123',
-  })
-  @IsString({ message: 'password deve ser um texto' })
-  @MinLength(PASSWORD_MIN_LENGTH, {
-    message: `password deve ter no mínimo ${PASSWORD_MIN_LENGTH} caracteres`,
-  })
-  @MaxLength(PASSWORD_MAX_LENGTH, {
-    message: `password deve ter no máximo ${PASSWORD_MAX_LENGTH} caracteres`,
-  })
-  @Matches(/^(?=.*\p{L})(?=.*\d)/u, {
-    message: 'password deve conter pelo menos uma letra e um número',
-  })
-  password: string;
 
   @ApiProperty({ enum: Role, enumName: 'Role', example: Role.USER })
   @IsEnum(Role, { message: 'role deve ser ADMIN ou USER' })

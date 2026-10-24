@@ -4,6 +4,7 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsEmail,
   IsISO8601,
   IsNotEmpty,
   IsNumber,
@@ -15,7 +16,11 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { Trim } from '../../../common/decorators/trim.decorator.js';
+import {
+  Trim,
+  TrimLowerCase,
+} from '../../../common/decorators/trim.decorator.js';
+import { EMAIL_MAX_LENGTH } from '../../users/dto/create-user.dto.js';
 import { IsCpfOrCnpj } from '../../customers/is-cpf-or-cnpj.validator.js';
 import type {
   CreateOrderRequest,
@@ -62,6 +67,19 @@ export class CustomerDto implements CustomerRequest {
   })
   @IsCpfOrCnpj({ message: 'document deve ser um CPF ou CNPJ válido' })
   document: string;
+
+  @ApiProperty({
+    description:
+      'Email do cliente. Recebe a confirmação do pedido e cada mudança de status. Armazenado sem espaços nas extremidades e em minúsculas.',
+    maxLength: EMAIL_MAX_LENGTH,
+    example: 'joao.silva@example.com',
+  })
+  @TrimLowerCase()
+  @IsEmail({}, { message: 'email deve ser um email válido' })
+  @MaxLength(EMAIL_MAX_LENGTH, {
+    message: `email deve ter no máximo ${EMAIL_MAX_LENGTH} caracteres`,
+  })
+  email: string;
 }
 
 export class OrderItemDto implements OrderItemRequest {

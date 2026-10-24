@@ -28,15 +28,17 @@ enum OrderStatus {
 }
 
 model User {
-  id           String   @id @default(uuid()) @db.Uuid
-  name         String   @db.VarChar(150)
+  id                 String   @id @default(uuid()) @db.Uuid
+  name               String   @db.VarChar(150)
   // Normalizado (trim + minúsculas) pela aplicação antes de gravar.
-  email        String   @unique @db.VarChar(254)
-  passwordHash String   @map("password_hash") @db.VarChar(255)
-  role         Role     @default(USER)
-  isActive     Boolean  @default(true) @map("is_active")
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  email              String   @unique @db.VarChar(254)
+  passwordHash       String   @map("password_hash") @db.VarChar(255)
+  role               Role     @default(USER)
+  isActive           Boolean  @default(true) @map("is_active")
+  // Senha temporária (gerada no cadastro): troca obrigatória no 1º acesso.
+  mustChangePassword Boolean  @default(false) @map("must_change_password")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   orders Order[]
 
@@ -57,6 +59,9 @@ model Customer {
   name        String       @db.VarChar(150)
   // CPF (11) ou CNPJ (14) sem pontuação. CHECK de formato x tipo na migration.
   document    String       @unique @db.VarChar(14)
+  // Destino dos emails de pedido e status. Obrigatório na API; nulo só em
+  // clientes criados antes do campo existir.
+  email       String?      @db.VarChar(254)
   // Definido pela aplicação a partir do documento.
   type        CustomerType
   // Pedidos ativos (deletedAt nulo). CHECK >= 0 na migration.

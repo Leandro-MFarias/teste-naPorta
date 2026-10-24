@@ -11,6 +11,7 @@ describe('toUserResponse', () => {
       passwordHash: '$2b$10$hash',
       role: 'ADMIN',
       isActive: true,
+      mustChangePassword: true,
       createdAt: new Date('2026-10-21T12:00:00.000Z'),
       updatedAt: new Date('2026-10-22T12:00:00.000Z'),
     };
@@ -23,6 +24,7 @@ describe('toUserResponse', () => {
       email: user.email,
       role: 'ADMIN',
       isActive: true,
+      mustChangePassword: true,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     });

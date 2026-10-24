@@ -18,6 +18,7 @@ describe('toOrderResponse', () => {
       id: 'a3d1b2c4-0000-4000-8000-000000000002',
       name: 'João da Silva',
       document: '52998224725',
+      email: 'joao@example.com',
       type: 'PERSON',
       ordersCount: 3,
       createdAt: new Date('2026-10-01T12:00:00.000Z'),
@@ -55,6 +56,7 @@ describe('toOrderResponse', () => {
       id: order.customer.id,
       name: 'João da Silva',
       document: '52998224725',
+      email: 'joao@example.com',
       type: 'PERSON',
     });
   });

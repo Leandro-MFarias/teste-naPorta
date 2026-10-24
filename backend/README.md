@@ -1,8 +1,10 @@
 # naPorta API
 
-API REST para gestão de pedidos de entrega: autenticação de usuários,
-cadastro de pedidos com itens, criação e reutilização automática de
-clientes por CPF/CNPJ, controle de status e exclusão lógica.
+API REST para gestão de pedidos de entrega: autenticação de usuários com
+primeiro acesso por senha temporária enviada por email, cadastro de
+pedidos com itens, criação e reutilização automática de clientes por
+CPF/CNPJ, controle de status com notificação do cliente por email e
+exclusão lógica.
 
 Este repositório contém apenas o backend. O plano completo da fundação
 está em [`docs/PLANO_FUNDACAO.md`](docs/PLANO_FUNDACAO.md).
@@ -21,6 +23,7 @@ está em [`docs/PLANO_FUNDACAO.md`](docs/PLANO_FUNDACAO.md).
 - [Swagger](#swagger)
 - [Autenticação](#autenticação)
 - [CORS](#cors)
+- [Emails](#emails)
 - [Endpoints e permissões](#endpoints-e-permissões)
 - [Regras de pedidos](#regras-de-pedidos)
 - [Formato das respostas](#formato-das-respostas)
@@ -43,8 +46,9 @@ src/
 ├── prisma/        # PrismaService (acesso único ao banco)
 ├── health/        # GET /health
 └── modules/
-    ├── auth/      # login JWT e hash de senha (Argon2id)
-    ├── users/     # cadastro de usuários (ADMIN)
+    ├── auth/      # login JWT, hash de senha (Argon2id), primeiro acesso e troca de senha
+    ├── users/     # cadastro de usuários (ADMIN) com senha temporária
+    ├── mail/      # envio SMTP (Nodemailer) e templates de email
     ├── customers/ # CPF/CNPJ e criação/reutilização de clientes (sem rotas próprias)
     └── orders/    # pedidos, itens, status, filtros e exclusão lógica
 prisma/
@@ -72,6 +76,7 @@ test/
 - JWT (HS256) com `@nestjs/jwt`; senhas com Argon2id
 - class-validator / class-transformer
 - Swagger (OpenAPI) com `@nestjs/swagger`
+- Nodemailer (SMTP); Mailpit para capturar emails em desenvolvimento
 - Vitest (testes unitários e de integração)
 - Docker e Docker Compose
 
@@ -103,6 +108,12 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
 | `JWT_SECRET` | Obrigatório, mínimo de 32 caracteres |
 | `JWT_EXPIRES_IN` | Validade do token, formato `<número><s\|m\|h\|d>`; mínimo `5h` (padrão `5h`) |
 | `CORS_ORIGINS` | Origens liberadas no CORS, separadas por vírgula (padrão `http://localhost:3000`); veja [CORS](#cors) |
+| `FRONTEND_URL` | URL do frontend usada nos links dos emails (padrão `http://localhost:3000`; o botão de acesso leva a `<FRONTEND_URL>/login`) |
+| `SMTP_HOST`, `SMTP_PORT` | Servidor SMTP (padrão `localhost:1025`, o Mailpit local) |
+| `SMTP_SECURE` | `true` para TLS direto (porta 465); `false` usa STARTTLS quando o servidor oferece (padrão `false`) |
+| `SMTP_USER`, `SMTP_PASSWORD` | Opcionais: credenciais do SMTP |
+| `MAIL_FROM` | Remetente (padrão `naPorta <no-reply@naporta.local>`) |
+| `MAILPIT_SMTP_PORT`, `MAILPIT_UI_PORT` | Portas do Mailpit publicadas no host (padrão `1025` e `8025`) |
 | `TEST_DATABASE_URL` | Opcional: banco dos testes de integração (nome deve terminar em `_test`) |
 
 As variáveis são validadas na inicialização: valores ausentes ou
@@ -115,21 +126,23 @@ API rodando na máquina, PostgreSQL no Docker:
 
 ```bash
 npm install            # também executa prisma generate (postinstall)
-npm run db:up          # sobe o PostgreSQL e espera ficar saudável
+npm run db:up          # sobe o PostgreSQL e o Mailpit e espera ficarem saudáveis
 npm run prisma:migrate:deploy
 npm run prisma:seed    # opcional: dados de demonstração
 npm run start:dev      # API em http://localhost:3333 (sobe o banco se preciso)
 ```
 
-Para parar o banco: `npm run db:down` (os dados ficam no volume
-`postgres-data`).
+Os emails enviados aparecem no Mailpit: `http://localhost:8025`. Para
+parar banco e Mailpit: `npm run db:down` (os dados do banco ficam no
+volume `postgres-data`).
 
 ## Execução com Docker Compose
 
-Sobe PostgreSQL, aplica as migrations e sobe a API em container:
+Sobe PostgreSQL e Mailpit, aplica as migrations e sobe a API em
+container:
 
 ```bash
-npm run docker:up      # build das imagens + db + migrate + api
+npm run docker:up      # build das imagens + db + mailpit + migrate + api
 npm run docker:seed    # opcional: seed dentro do container
 npm run docker:down    # para e remove os containers (o volume é mantido)
 ```
@@ -138,13 +151,15 @@ npm run docker:down    # para e remove os containers (o volume é mantido)
   `start:dev` ao mesmo tempo na mesma porta.
 - O serviço `migrate` executa `prisma migrate deploy` e termina; a API
   só sobe depois que ele conclui com sucesso.
+- Dentro do Compose a API envia emails pelo host `mailpit` (porta 1025)
+  e só sobe depois que ele está saudável.
 - Dentro do Compose a API conecta no host `db`; a `DATABASE_URL` é
   montada a partir das variáveis `POSTGRES_*` (use uma senha sem
   caracteres que precisem de escape em URL, ou ajuste o `compose.yaml`).
 - A imagem da API (`Dockerfile`, estágio `runtime`) roda como usuário
   sem privilégios, com `NODE_ENV=production`, healthcheck em `/health` e
   nenhum segredo embutido: tudo chega por variável de ambiente.
-- `npm run db:up` continua subindo apenas o PostgreSQL; a API e o
+- `npm run db:up` sobe apenas o PostgreSQL e o Mailpit; a API e o
   `migrate` pertencem ao profile `app` do Compose.
 
 ## Prisma: client, migrations e seed
@@ -166,7 +181,10 @@ dados. Ele cria 2 usuários, 8 clientes fictícios (CPF, CNPJ e CNPJ
 alfanumérico) e 24 pedidos (`PED-2026-0001` a `PED-2026-0024`) com os
 seis status, de 1 a 3 itens e datas de criação entre julho e outubro de
 2026. Usuários existentes não têm a senha alterada; pedidos cujo número
-já existe são ignorados. O seed se recusa a rodar com
+já existe são ignorados. Os usuários do seed não passam pelo primeiro
+acesso (não precisam trocar a senha), os clientes recebem emails
+fictícios `@example.com` (clientes do seed ainda sem email são
+preenchidos) e nenhum email é enviado. O seed se recusa a rodar com
 `NODE_ENV=production`.
 
 | Papel | Email | Senha |
@@ -191,8 +209,8 @@ já existe são ignorados. O seed se recusa a rodar com
 | `test:watch` | Testes unitários em modo watch |
 | `test:cov` | Testes unitários com cobertura (`coverage/`) |
 | `test:integration` | Testes de integração (`vitest.config.integration.ts`) |
-| `db:up` / `db:down` | Sobe / para o PostgreSQL do Compose |
-| `docker:up` / `docker:down` | Sobe / para banco, migrations e API em containers |
+| `db:up` / `db:down` | Sobe / para o PostgreSQL e o Mailpit do Compose |
+| `docker:up` / `docker:down` | Sobe / para banco, Mailpit, migrations e API em containers |
 | `docker:seed` | Executa o seed no container de migrations |
 | `prisma:generate` | Gera o Prisma Client |
 | `prisma:migrate` | `prisma migrate dev` |
@@ -211,13 +229,18 @@ npm run test:integration  # integração (precisa do PostgreSQL: npm run db:up)
 ```
 
 - **Unitários** (`*.spec.ts` em `src/`, `prisma/` e `test/`): services,
-  guards, validações, CPF/CNPJ, transições de status, mapeamentos e
-  rotas HTTP com dependências substituídas por mocks.
+  guards, validações, CPF/CNPJ, transições de status, mapeamentos,
+  templates de email, geração de senha temporária e rotas HTTP com
+  dependências substituídas por mocks.
 - **Integração** (`*.integration-spec.ts`): sobem o `AppModule` completo
   e fazem requisições HTTP reais contra um PostgreSQL de verdade —
   transações e rollback, concorrência na criação de clientes, unicidade
   do número do pedido, `ordersCount`, exclusão lógica, filtros,
-  paginação, autenticação/autorização e idempotência do seed.
+  paginação, autenticação/autorização, primeiro acesso, emails enviados
+  (cadastro de usuário, pedido e status) e idempotência do seed.
+
+Nenhum teste envia email de verdade: o envio SMTP é substituído por uma
+implementação em memória que guarda as mensagens para conferência.
 
 Os testes de integração **nunca usam o banco de desenvolvimento**. Eles
 usam `TEST_DATABASE_URL` ou, por padrão, o banco da `DATABASE_URL` com o
@@ -251,7 +274,7 @@ Content-Type: application/json
     "accessToken": "eyJ...",
     "tokenType": "Bearer",
     "expiresIn": 18000,
-    "user": { "id": "...", "name": "...", "email": "admin@example.com", "role": "ADMIN", "isActive": true, "createdAt": "...", "updatedAt": "..." }
+    "user": { "id": "...", "name": "...", "email": "admin@example.com", "role": "ADMIN", "isActive": true, "mustChangePassword": false, "createdAt": "...", "updatedAt": "..." }
   }
 }
 ```
@@ -263,6 +286,39 @@ Content-Type: application/json
   `401 "Email ou senha inválidos."`.
 - A cada requisição o usuário é conferido no banco: se for desativado,
   tokens já emitidos deixam de funcionar, e o papel usado é o atual.
+- `GET /auth/me` retorna o usuário autenticado.
+
+### Primeiro acesso
+
+1. O ADMIN cadastra o usuário (`POST /users`, sem senha). A API gera
+   uma senha temporária aleatória e a envia no email de boas-vindas,
+   junto com o botão **Acessar o sistema** (`<FRONTEND_URL>/login`).
+2. O usuário faz login com a senha temporária. A resposta traz
+   `user.mustChangePassword: true`.
+3. Enquanto não trocar a senha, todas as rotas retornam
+   `403 "Troque a senha temporária antes de continuar."`, exceto
+   `GET /auth/me` e `POST /auth/change-password`.
+4. Troca de senha:
+
+   ```http
+   POST /auth/change-password
+   Authorization: Bearer <accessToken>
+   Content-Type: application/json
+
+   { "currentPassword": "<senha temporária>", "newPassword": "MinhaSenha123" }
+   ```
+
+   Retorna `200` com o usuário (`mustChangePassword: false`). O mesmo
+   token passa a valer em todas as rotas, e a senha temporária deixa de
+   funcionar. Senha atual incorreta retorna
+   `400 "Senha atual incorreta."`; nova senha igual à atual retorna
+   `400 "A nova senha deve ser diferente da senha atual."`. A nova senha
+   segue a política: 8 a 128 caracteres, com ao menos uma letra e um
+   número.
+
+A troca de senha também pode ser usada a qualquer momento por usuários
+que já concluíram o primeiro acesso. A senha temporária não expira, mas
+só serve para o primeiro login.
 
 ## CORS
 
@@ -296,13 +352,71 @@ CORS_ORIGINS=http://localhost:3000,https://portal.naporta.com.br
 - O CORS vale apenas para navegadores; ferramentas como curl, Postman ou
   outro backend não são afetadas.
 
+## Emails
+
+Os emails são enviados por SMTP (Nodemailer), em HTML com layout escuro
+e marca em texto "naPorta", sempre com uma versão em texto puro. Em
+desenvolvimento, o [Mailpit](https://mailpit.axllent.org/) (serviço
+`mailpit` do Compose) captura tudo sem entregar a ninguém: abra
+`http://localhost:8025` para ver as mensagens.
+
+| Email | Destinatário | Quando |
+| --- | --- | --- |
+| Boas-vindas com senha temporária | Usuário cadastrado | `POST /users` |
+| Pedido recebido | Cliente | Pedido criado (o texto muda se o cliente acabou de ser cadastrado) |
+| Pedido recebido (vinculado ao cliente) | Novo cliente | `PATCH` troca o cliente do pedido |
+| Status atualizado | Cliente | `PATCH` muda o status (status anterior e novo) |
+
+- Os emails de pedido trazem número, status, previsão de entrega,
+  endereço, itens com preço e total.
+- **Boas-vindas:** se o envio falhar, o cadastro é cancelado (o usuário
+  não é criado) e a API retorna
+  `503 "Não foi possível enviar o email de boas-vindas. O usuário não foi cadastrado; tente novamente."`.
+- **Pedidos:** os emails saem depois que a operação é confirmada no
+  banco, em segundo plano. Uma falha de envio não desfaz nem atrasa o
+  pedido; é registrada no log com o número do pedido (sem o email do
+  cliente).
+- Não há email quando: a edição não muda o status nem o cliente,
+  o status reenviado é o atual, a operação falha, o pedido é excluído,
+  ou o cliente não tem email (clientes antigos, anteriores a este campo).
+- Na troca de cliente, só o novo cliente é avisado (com o pedido no
+  status atual, mesmo que o status também tenha mudado); o cliente
+  anterior não recebe email.
+
+> **Importante:** com a configuração padrão, **nenhum email chega de
+> verdade à caixa de entrada**, nem para endereços reais (ex.: Gmail):
+> todos ficam retidos no Mailpit. Para testar o fluxo localmente não é
+> preciso nenhuma conta; qualquer email serve e a mensagem (com a senha
+> temporária) aparece em `http://localhost:8025`.
+>
+> **Para entregar emails de verdade é obrigatório configurar uma conta
+> SMTP válida** (Gmail com senha de app, Amazon SES, SendGrid, Resend,
+> Brevo etc.) nas variáveis `SMTP_*`:
+>
+> ```dotenv
+> SMTP_HOST=smtp.seu-provedor.com
+> SMTP_PORT=587
+> SMTP_SECURE=false          # true se usar a porta 465
+> SMTP_USER=usuario-do-smtp
+> SMTP_PASSWORD=senha-ou-chave-do-smtp
+> MAIL_FROM=naPorta <no-reply@seu-dominio.com>
+> ```
+>
+> Use em `MAIL_FROM` um remetente autorizado no provedor (domínio com
+> SPF/DKIM), senão os emails podem ser recusados ou ir para o spam. Sem
+> SMTP válido, o `POST /users` retorna `503` e o usuário não é
+> cadastrado. No Docker Compose, a API usa o Mailpit; para usar um
+> provedor real ali, ajuste `SMTP_*` do serviço `api` no `compose.yaml`.
+
 ## Endpoints e permissões
 
 | Método | Rota | Descrição | Acesso |
 | --- | --- | --- | --- |
 | `POST` | `/auth/login` | Autentica e retorna o token | Público |
+| `GET` | `/auth/me` | Usuário autenticado | Autenticado (inclusive no primeiro acesso) |
+| `POST` | `/auth/change-password` | Troca a senha e conclui o primeiro acesso | Autenticado (inclusive no primeiro acesso) |
 | `GET` | `/health` | Saúde da API e do banco (200 ou 503) | Público |
-| `POST` | `/users` | Cadastra usuário | ADMIN |
+| `POST` | `/users` | Cadastra usuário e envia a senha temporária por email | ADMIN |
 | `POST` | `/orders` | Cria pedido | ADMIN, USER |
 | `GET` | `/orders` | Lista pedidos ativos com filtros e paginação | ADMIN, USER |
 | `GET` | `/orders/:id` | Consulta pedido ativo | ADMIN, USER |
@@ -311,14 +425,18 @@ CORS_ORIGINS=http://localhost:3000,https://portal.naporta.com.br
 
 Não há rotas próprias de clientes: eles são geridos pelas operações de
 pedido. Sem token, rotas protegidas retornam `401`; com papel
-insuficiente, `403`.
+insuficiente, ou antes de trocar a senha temporária, `403`.
 
 ### Usuários
 
-`POST /users` recebe `name`, `email` (gravado em minúsculas, único),
-`password` (8 a 128 caracteres, com ao menos uma letra e um número) e
-`role` (`ADMIN` ou `USER`). A senha é armazenada como hash Argon2id.
-Email já cadastrado retorna `409`.
+`POST /users` recebe `name`, `email` (gravado em minúsculas, único) e
+`role` (`ADMIN` ou `USER`). **Não recebe senha** (enviar `password`
+retorna `400`): a API gera uma senha temporária aleatória de 16
+caracteres, grava apenas o hash Argon2id e a envia no email de
+boas-vindas. O usuário nasce com `mustChangePassword: true` e conclui o
+cadastro no [primeiro acesso](#primeiro-acesso). Email já cadastrado
+retorna `409` (sem enviar email); falha no envio do email retorna `503`
+e o usuário não é criado.
 
 ### Listagem: filtros e paginação
 
@@ -345,17 +463,21 @@ Email já cadastrado retorna `409`.
 
 **Criação** (`POST /orders`): `orderNumber` (único, até 50 caracteres),
 `expectedDeliveryDate` (`YYYY-MM-DD`), `deliveryAddress`, `customer`
-(`name` e `document`) e `items` (1 a 100 itens com `description` e
+(`name`, `document` e `email`, todos obrigatórios) e `items` (1 a 100 itens com `description` e
 `price` não negativo, até duas casas decimais). O status inicial é
 sempre `PENDING` e o criador é o usuário autenticado.
 
 **Clientes por CPF/CNPJ:** o documento pode vir com ou sem pontuação; é
 normalizado, validado (inclusive CNPJ alfanumérico) e define o tipo
 (`PERSON` para CPF, `COMPANY` para CNPJ). Se o documento ainda não
-existe, o cliente é criado; se existe com o mesmo nome, é reutilizado;
-se existe com outro nome, o nome é atualizado e a resposta inclui um
-aviso (`warnings`), sem tratar a operação como erro. O banco garante um
-único cliente por documento, inclusive sob requisições simultâneas.
+existe, o cliente é criado; se existe com o mesmo nome e email, é
+reutilizado; se existe com outro nome ou outro email, os dados são
+atualizados e a resposta inclui um aviso (`warnings`) para cada campo
+alterado, sem tratar a operação como erro. O email é gravado em
+minúsculas; um cliente antigo sem email recebe o informado sem aviso.
+O banco garante um único cliente por documento, inclusive sob
+requisições simultâneas. O cliente recebe emails do pedido (veja
+[Emails](#emails)).
 
 **Status** — transições permitidas:
 
@@ -402,7 +524,7 @@ Recurso individual (com `warnings` apenas quando houver aviso):
     "expectedDeliveryDate": "2026-11-15",
     "deliveryAddress": "Rua das Flores, 123",
     "status": "PENDING",
-    "customer": { "id": "uuid", "name": "João da Silva", "document": "52998224725", "type": "PERSON" },
+    "customer": { "id": "uuid", "name": "João da Silva", "document": "52998224725", "email": "joao@example.com", "type": "PERSON" },
     "items": [{ "id": "uuid", "description": "Caixa de som", "price": "199.90" }],
     "createdById": "uuid",
     "createdAt": "2026-10-24T12:00:00.000Z",
@@ -415,8 +537,13 @@ Recurso individual (com `warnings` apenas quando houver aviso):
 ```
 
 Preços são strings com duas casas (`"199.90"`) para não perder precisão.
-Para CNPJ, a mensagem do aviso é "CNPJ já cadastrado. A razão social foi
-atualizada.".
+`customer.email` é `null` apenas em clientes antigos, cadastrados antes
+do campo existir.
+
+| Código do aviso | CPF | CNPJ |
+| --- | --- | --- |
+| `CUSTOMER_NAME_UPDATED` | "CPF já cadastrado. O nome do cliente foi atualizado." | "CNPJ já cadastrado. A razão social foi atualizada." |
+| `CUSTOMER_EMAIL_UPDATED` | "CPF já cadastrado. O email do cliente foi atualizado." | "CNPJ já cadastrado. O email da empresa foi atualizado." |
 
 Listagem:
 
@@ -436,10 +563,11 @@ Erro (todas as rotas):
 | --- | --- |
 | `400` | Entrada inválida, CPF/CNPJ inválido, id não UUID, transição de status não permitida |
 | `401` | Token ausente, inválido ou expirado; credenciais inválidas |
-| `403` | Usuário sem permissão para a rota |
+| `403` | Usuário sem permissão para a rota; senha temporária ainda não trocada |
 | `404` | Recurso inexistente ou pedido excluído |
 | `409` | Número de pedido ou email duplicado |
 | `500` | Erro inesperado — sem stack trace ou detalhes internos na resposta |
+| `503` | Email de boas-vindas não enviado (usuário não criado); banco indisponível em `/health` |
 
 ## Segurança em produção
 
@@ -453,10 +581,16 @@ Erro (todas as rotas):
   `db push`.
 - Libere em `CORS_ORIGINS` somente os domínios reais do portal, com
   `https://`.
+- Configure um SMTP real com TLS (`SMTP_SECURE=true` na porta 465, ou
+  STARTTLS na 587), credenciais em gerenciador de segredos e
+  `FRONTEND_URL` com o endereço `https://` do portal. O Mailpit é apenas
+  para desenvolvimento.
+- A senha temporária só existe no email de boas-vindas: nunca é gravada
+  em texto puro, retornada pela API ou registrada em log.
 - Publique a API atrás de HTTPS (proxy reverso ou balanceador); o token
   trafega no header `Authorization`.
 - O Swagger (`/api/docs`) fica disponível em todos os ambientes;
   avalie restringir o acesso a ele em produção.
-- Logs de erro não incluem senhas, hashes ou tokens; respostas `500` não
-  expõem detalhes internos.
+- Logs de erro não incluem senhas, hashes, tokens nem emails de
+  clientes; respostas `500` não expõem detalhes internos.
 - Rode `npm audit` regularmente e mantenha as dependências atualizadas.

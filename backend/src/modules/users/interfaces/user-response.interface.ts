@@ -7,6 +7,8 @@ export interface UserResponse {
   email: string;
   role: Role;
   isActive: boolean;
+  /** true enquanto a senha temporária não for trocada (primeiro acesso). */
+  mustChangePassword: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

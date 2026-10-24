@@ -5,19 +5,50 @@ import { AppModule } from '../../src/app.module.js';
 import { configureApp } from '../../src/app.setup.js';
 import type { Role } from '../../src/generated/prisma/enums.js';
 import { ARGON2_OPTIONS } from '../../src/modules/auth/password.service.js';
+import {
+  EmailSender,
+  type EmailMessage,
+} from '../../src/modules/mail/email-sender.js';
 import { PrismaService } from '../../src/prisma/prisma.service.js';
+
+/**
+ * Substitui o SMTP nos testes: guarda as mensagens em memória. Com
+ * `failWith` definido, todo envio rejeita com esse erro.
+ */
+export class FakeEmailSender extends EmailSender {
+  readonly sent: EmailMessage[] = [];
+  failWith?: Error;
+
+  send(message: EmailMessage): Promise<void> {
+    if (this.failWith) {
+      return Promise.reject(this.failWith);
+    }
+    this.sent.push(message);
+    return Promise.resolve();
+  }
+
+  reset(): void {
+    this.sent.length = 0;
+    this.failWith = undefined;
+  }
+}
 
 export interface TestApp {
   app: INestApplication;
   prisma: PrismaService;
   baseUrl: string;
+  mail: FakeEmailSender;
 }
 
 /** Sobe a aplicação completa (AppModule) contra o banco de teste. */
 export async function createTestApp(): Promise<TestApp> {
+  const mail = new FakeEmailSender();
   const moduleRef = await Test.createTestingModule({
     imports: [AppModule],
-  }).compile();
+  })
+    .overrideProvider(EmailSender)
+    .useValue(mail)
+    .compile();
 
   const app = moduleRef.createNestApplication({ logger: false });
   configureApp(app);
@@ -27,6 +58,7 @@ export async function createTestApp(): Promise<TestApp> {
     app,
     prisma: app.get(PrismaService),
     baseUrl: await app.getUrl(),
+    mail,
   };
 }
 

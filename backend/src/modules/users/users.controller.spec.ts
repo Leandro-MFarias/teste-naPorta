@@ -40,7 +40,6 @@ describe('POST /users', () => {
   const body = {
     name: 'Maria Souza',
     email: ' Maria.Souza@Example.com ',
-    password: 'SenhaForte123',
     role: 'USER',
   };
 
@@ -113,6 +112,7 @@ describe('POST /users', () => {
         email: request.email,
         role: request.role,
         isActive: true,
+        mustChangePassword: true,
         createdAt: new Date('2026-10-24T12:00:00.000Z'),
         updatedAt: new Date('2026-10-24T12:00:00.000Z'),
       }),
@@ -123,7 +123,6 @@ describe('POST /users', () => {
     expect(create).toHaveBeenCalledWith({
       name: 'Maria Souza',
       email: 'maria.souza@example.com',
-      password: 'SenhaForte123',
       role: 'USER',
     });
     expect(res).toEqual({
@@ -135,6 +134,7 @@ describe('POST /users', () => {
           email: 'maria.souza@example.com',
           role: 'USER',
           isActive: true,
+          mustChangePassword: true,
           createdAt: '2026-10-24T12:00:00.000Z',
           updatedAt: '2026-10-24T12:00:00.000Z',
         },
@@ -142,9 +142,15 @@ describe('POST /users', () => {
     });
   });
 
-  it('retorna 400 para dados inválidos e campos não permitidos', async () => {
+  it('retorna 400 para dados inválidos e campos não permitidos (inclusive senha)', async () => {
     const res = await post(
-      { ...body, password: 'curta', isActive: false, passwordHash: 'x' },
+      {
+        ...body,
+        email: 'invalido',
+        password: 'SenhaForte123',
+        isActive: false,
+        passwordHash: 'x',
+      },
       admin,
     );
 
@@ -154,7 +160,8 @@ describe('POST /users', () => {
       message: expect.arrayContaining([
         'property isActive should not exist',
         'property passwordHash should not exist',
-        'password deve ter no mínimo 8 caracteres',
+        'property password should not exist',
+        'email deve ser um email válido',
       ]) as unknown,
     });
     expect(create).not.toHaveBeenCalled();

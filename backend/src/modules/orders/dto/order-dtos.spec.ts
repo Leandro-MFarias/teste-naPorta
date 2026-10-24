@@ -12,7 +12,11 @@ const validOrder = {
   orderNumber: 'PED-1001',
   expectedDeliveryDate: '2026-11-15',
   deliveryAddress: 'Rua das Flores, 123',
-  customer: { name: 'João da Silva', document: '529.982.247-25' },
+  customer: {
+    name: 'João da Silva',
+    document: '529.982.247-25',
+    email: 'joao@example.com',
+  },
   items: [{ description: 'Caixa de som', price: 199.9 }],
 };
 
@@ -29,11 +33,30 @@ describe('CreateOrderDto', () => {
     for (const document of ['11.222.333/0001-81', '12.ABC.345/01DE-35']) {
       const { errors } = await validateDto(CreateOrderDto, {
         ...validOrder,
-        customer: { name: 'Empresa X', document },
+        customer: { name: 'Empresa X', document, email: 'x@example.com' },
       });
 
       expect(errors).toEqual([]);
     }
+  });
+
+  it('exige email válido do cliente e normaliza para minúsculas', async () => {
+    const missing = await validateDto(CreateOrderDto, {
+      ...validOrder,
+      customer: { name: 'João', document: '529.982.247-25' },
+    });
+    const invalid = await validateDto(CreateOrderDto, {
+      ...validOrder,
+      customer: { ...validOrder.customer, email: 'nao-e-email' },
+    });
+    const normalized = await validateDto(CreateOrderDto, {
+      ...validOrder,
+      customer: { ...validOrder.customer, email: '  Joao@Example.COM ' },
+    });
+
+    expect(missing.errors).toContain('customer.email deve ser um email válido');
+    expect(invalid.errors).toContain('customer.email deve ser um email válido');
+    expect(normalized.dto?.customer.email).toBe('joao@example.com');
   });
 
   it('rejeita lista de itens vazia', async () => {

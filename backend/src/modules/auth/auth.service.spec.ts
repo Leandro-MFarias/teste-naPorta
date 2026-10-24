@@ -1,4 +1,4 @@
-import { UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
@@ -6,11 +6,19 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { testJwtService } from '../../../test/auth.js';
 import type { User } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
-import { AuthService, INVALID_CREDENTIALS_MESSAGE } from './auth.service.js';
+import {
+  AuthService,
+  INVALID_CREDENTIALS_MESSAGE,
+  SAME_PASSWORD_MESSAGE,
+  WRONG_CURRENT_PASSWORD_MESSAGE,
+} from './auth.service.js';
 import { PasswordService } from './password.service.js';
 
 describe('AuthService', () => {
   const findUnique = vi.fn<(args: unknown) => Promise<User | null>>();
+  const findUniqueOrThrow = vi.fn<(args: unknown) => Promise<User>>();
+  const update =
+    vi.fn<(args: { where: unknown; data: Partial<User> }) => Promise<User>>();
   let service: AuthService;
   let passwords: PasswordService;
   let user: User;
@@ -23,6 +31,7 @@ describe('AuthService', () => {
       passwordHash: await new PasswordService().hash('SenhaForte123'),
       role: 'USER',
       isActive: true,
+      mustChangePassword: false,
       createdAt: new Date('2026-10-21T12:00:00.000Z'),
       updatedAt: new Date('2026-10-21T12:00:00.000Z'),
     };
@@ -30,13 +39,20 @@ describe('AuthService', () => {
 
   beforeEach(async () => {
     findUnique.mockReset();
+    findUniqueOrThrow.mockReset().mockResolvedValue(user);
+    update
+      .mockReset()
+      .mockImplementation(({ data }) => Promise.resolve({ ...user, ...data }));
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         AuthService,
         PasswordService,
         { provide: JwtService, useValue: testJwtService },
-        { provide: PrismaService, useValue: { user: { findUnique } } },
+        {
+          provide: PrismaService,
+          useValue: { user: { findUnique, findUniqueOrThrow, update } },
+        },
         {
           provide: ConfigService,
           useValue: { get: () => '5h' },
@@ -64,6 +80,7 @@ describe('AuthService', () => {
       email: user.email,
       role: 'USER',
       isActive: true,
+      mustChangePassword: false,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     });
@@ -108,5 +125,51 @@ describe('AuthService', () => {
       'qualquer1',
       expect.stringMatching(/^\$argon2id\$v=19\$m=19456,p=1,t=2\$/),
     );
+  });
+
+  it('me: retorna o usuário autenticado sem credenciais', async () => {
+    const result = await service.me(user.id);
+
+    expect(findUniqueOrThrow).toHaveBeenCalledWith({ where: { id: user.id } });
+    expect(result).toMatchObject({ id: user.id, mustChangePassword: false });
+    expect(JSON.stringify(result)).not.toContain(user.passwordHash);
+  });
+
+  it('changePassword: grava o novo hash e encerra o primeiro acesso', async () => {
+    findUniqueOrThrow.mockResolvedValue({ ...user, mustChangePassword: true });
+
+    const result = await service.changePassword(user.id, {
+      currentPassword: 'SenhaForte123',
+      newPassword: 'NovaSenha456',
+    });
+
+    const { data } = update.mock.calls[0][0];
+    expect(update.mock.calls[0][0].where).toEqual({ id: user.id });
+    expect(data.mustChangePassword).toBe(false);
+    await expect(
+      passwords.verify('NovaSenha456', data.passwordHash ?? ''),
+    ).resolves.toBe(true);
+    expect(result.mustChangePassword).toBe(false);
+    expect(JSON.stringify(result)).not.toContain(data.passwordHash);
+  });
+
+  it('changePassword: rejeita senha atual incorreta', async () => {
+    await expect(
+      service.changePassword(user.id, {
+        currentPassword: 'SenhaErrada123',
+        newPassword: 'NovaSenha456',
+      }),
+    ).rejects.toThrow(new BadRequestException(WRONG_CURRENT_PASSWORD_MESSAGE));
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('changePassword: rejeita nova senha igual à atual', async () => {
+    await expect(
+      service.changePassword(user.id, {
+        currentPassword: 'SenhaForte123',
+        newPassword: 'SenhaForte123',
+      }),
+    ).rejects.toThrow(new BadRequestException(SAME_PASSWORD_MESSAGE));
+    expect(update).not.toHaveBeenCalled();
   });
 });

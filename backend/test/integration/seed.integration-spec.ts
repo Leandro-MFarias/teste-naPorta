@@ -1,6 +1,10 @@
 import { execFileSync } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { SEED_ORDER_COUNT, SEED_USERS } from '../../prisma/seed/data.js';
+import {
+  SEED_CUSTOMERS,
+  SEED_ORDER_COUNT,
+  SEED_USERS,
+} from '../../prisma/seed/data.js';
 import {
   apiClient,
   createTestApp,
@@ -84,6 +88,28 @@ describe('Seed (integração)', () => {
       limit: 5,
       totalPages: Math.ceil(SEED_ORDER_COUNT / 5),
     });
+  });
+
+  it('preenche emails de clientes antigos, não exige troca de senha e não envia emails', async () => {
+    runSeed();
+    // Simula banco anterior à coluna de email.
+    await ctx.prisma.customer.updateMany({ data: { email: null } });
+
+    runSeed();
+
+    const customers = await ctx.prisma.customer.findMany({
+      select: { document: true, email: true },
+      orderBy: { document: 'asc' },
+    });
+    expect(customers).toEqual(
+      SEED_CUSTOMERS.map(({ document, email }) => ({ document, email })).sort(
+        (a, b) => a.document.localeCompare(b.document),
+      ),
+    );
+    expect(
+      await ctx.prisma.user.count({ where: { mustChangePassword: true } }),
+    ).toBe(0);
+    expect(ctx.mail.sent).toEqual([]);
   });
 
   it('recusa rodar em produção', () => {

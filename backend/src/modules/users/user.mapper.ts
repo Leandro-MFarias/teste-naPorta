@@ -12,6 +12,7 @@ export function toUserResponse(user: User): UserResponse {
     email: user.email,
     role: user.role,
     isActive: user.isActive,
+    mustChangePassword: user.mustChangePassword,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   };

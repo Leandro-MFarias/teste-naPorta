@@ -9,6 +9,8 @@ export interface OrderCustomerResponse {
   name: string;
   /** CPF ou CNPJ sem pontuação. */
   document: string;
+  /** Nulo apenas em clientes cadastrados antes do campo existir. */
+  email: string | null;
   type: CustomerType;
 }
 

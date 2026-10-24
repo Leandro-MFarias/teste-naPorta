@@ -5,7 +5,6 @@ import { CreateUserDto } from './create-user.dto.js';
 const valid = {
   name: 'Maria Souza',
   email: 'maria.souza@example.com',
-  password: 'SenhaForte123',
   role: 'USER',
 };
 
@@ -28,15 +27,13 @@ describe('CreateUserDto', () => {
     expect(dto?.email).toBe('maria.souza@example.com');
   });
 
-  it.each([
-    ['curta', 'Ab1'],
-    ['sem número', 'SenhaSemNumero'],
-    ['sem letra', '1234567890'],
-    ['acima de 128 caracteres', `a1${'x'.repeat(127)}`],
-  ])('rejeita senha %s', async (_, password) => {
-    const { errors } = await validateDto(CreateUserDto, { ...valid, password });
+  it('rejeita senha no body: ela é sempre gerada pelo sistema', async () => {
+    const { errors } = await validateDto(CreateUserDto, {
+      ...valid,
+      password: 'SenhaForte123',
+    });
 
-    expect(errors.some((m) => m.startsWith('password'))).toBe(true);
+    expect(errors).toEqual(['property password should not exist']);
   });
 
   it('rejeita email inválido e papel inexistente', async () => {

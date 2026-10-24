@@ -26,6 +26,7 @@ export function toOrderResponse(order: OrderWithRelations): OrderResponse {
       id: order.customer.id,
       name: order.customer.name,
       document: order.customer.document,
+      email: order.customer.email,
       type: order.customer.type,
     },
     items: order.items.map((item) => ({

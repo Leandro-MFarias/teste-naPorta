@@ -26,6 +26,15 @@ export class OrderCustomerResponseDto implements OrderCustomerResponse {
   document: string;
 
   @ApiProperty({
+    type: String,
+    nullable: true,
+    description:
+      'Destino dos emails de pedido e status. Nulo apenas em clientes cadastrados antes do campo existir.',
+    example: 'joao.silva@example.com',
+  })
+  email: string | null;
+
+  @ApiProperty({
     enum: CustomerType,
     enumName: 'CustomerType',
     description: 'PERSON para CPF, COMPANY para CNPJ.',

@@ -18,6 +18,8 @@ export interface SeedUser {
 export interface SeedCustomer {
   name: string;
   document: string;
+  /** Domínio reservado example.com: nenhum email real. */
+  email: string;
 }
 
 export interface SeedOrder {
@@ -48,15 +50,47 @@ export const SEED_USERS: readonly SeedUser[] = [
 ];
 
 export const SEED_CUSTOMERS: readonly SeedCustomer[] = [
-  { name: 'Ana Fictícia Souza', document: '12345678062' },
-  { name: 'Bruno Exemplo Lima', document: '98765432029' },
-  { name: 'Carla Teste Rocha', document: '24681357090' },
-  { name: 'Diego Modelo Alves', document: '13579246070' },
-  { name: 'Elisa Amostra Costa', document: '31415926085' },
-  { name: 'Comercial Exemplo Ltda', document: '11222333000181' },
-  { name: 'Distribuidora Fictícia S.A.', document: '44555666000181' },
+  {
+    name: 'Ana Fictícia Souza',
+    document: '12345678062',
+    email: 'ana.souza@example.com',
+  },
+  {
+    name: 'Bruno Exemplo Lima',
+    document: '98765432029',
+    email: 'bruno.lima@example.com',
+  },
+  {
+    name: 'Carla Teste Rocha',
+    document: '24681357090',
+    email: 'carla.rocha@example.com',
+  },
+  {
+    name: 'Diego Modelo Alves',
+    document: '13579246070',
+    email: 'diego.alves@example.com',
+  },
+  {
+    name: 'Elisa Amostra Costa',
+    document: '31415926085',
+    email: 'elisa.costa@example.com',
+  },
+  {
+    name: 'Comercial Exemplo Ltda',
+    document: '11222333000181',
+    email: 'contato@comercial-exemplo.example.com',
+  },
+  {
+    name: 'Distribuidora Fictícia S.A.',
+    document: '44555666000181',
+    email: 'vendas@distribuidora-ficticia.example.com',
+  },
   // CNPJ alfanumérico (formato novo da Receita Federal).
-  { name: 'Loja Demonstração ME', document: 'A1B2C3D4000193' },
+  {
+    name: 'Loja Demonstração ME',
+    document: 'A1B2C3D4000193',
+    email: 'loja@demonstracao.example.com',
+  },
 ];
 
 const ADDRESSES = [

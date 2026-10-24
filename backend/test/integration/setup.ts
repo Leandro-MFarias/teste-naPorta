@@ -8,3 +8,5 @@ process.env.NODE_ENV = 'test';
 process.env.DATABASE_URL = resolveTestDatabaseUrl();
 process.env.JWT_SECRET = randomBytes(48).toString('base64url');
 process.env.JWT_EXPIRES_IN = '5h';
+// Emails não saem: createTestApp troca o EmailSender por uma fake.
+process.env.FRONTEND_URL = 'http://frontend.test';

@@ -1,9 +1,12 @@
-import { plainToInstance, Type } from 'class-transformer';
+import { plainToInstance, Transform, Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsEnum,
   IsInt,
   IsNotEmpty,
+  IsOptional,
   IsString,
+  IsUrl,
   Matches,
   Max,
   Min,
@@ -100,6 +103,48 @@ export class EnvironmentVariables {
       'CORS_ORIGINS must be a comma-separated list of http(s) origins, e.g. http://localhost:3000',
   })
   CORS_ORIGINS: string = DEFAULT_CORS_ORIGINS;
+
+  /** URL do frontend, usada nos links dos emails (ex.: botão de login). */
+  @IsUrl(
+    {
+      require_tld: false,
+      protocols: ['http', 'https'],
+      require_protocol: true,
+    },
+    { message: 'FRONTEND_URL must be an http(s) URL' },
+  )
+  FRONTEND_URL: string = 'http://localhost:3000';
+
+  // SMTP. Os padrões apontam para o Mailpit local do compose.yaml.
+  @IsString()
+  @IsNotEmpty()
+  SMTP_HOST: string = 'localhost';
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  SMTP_PORT: number = 1025;
+
+  /** true para TLS direto (porta 465); false usa STARTTLS quando disponível. */
+  @Transform(({ value }: { value: unknown }) =>
+    value === 'true' ? true : value === 'false' ? false : value,
+  )
+  @IsBoolean({ message: 'SMTP_SECURE must be true or false' })
+  SMTP_SECURE: boolean = false;
+
+  @IsOptional()
+  @IsString()
+  SMTP_USER?: string;
+
+  @IsOptional()
+  @IsString()
+  SMTP_PASSWORD?: string;
+
+  /** Remetente, ex.: "naPorta <no-reply@naporta.com.br>". */
+  @IsString()
+  @IsNotEmpty()
+  MAIL_FROM: string = 'naPorta <no-reply@naporta.local>';
 }
 
 /**

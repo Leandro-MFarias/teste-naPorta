@@ -80,6 +80,7 @@ src/
 │   ├── auth/
 │   ├── users/
 │   ├── customers/
+│   ├── mail/
 │   └── orders/
 └── ...
 prisma/
@@ -134,6 +135,13 @@ DATABASE_URL=postgresql://local_user:local_password@localhost:5432/local_db?sche
 JWT_SECRET=replace-with-a-long-random-secret-of-at-least-32-chars
 JWT_EXPIRES_IN=5h
 CORS_ORIGINS=http://localhost:3000
+FRONTEND_URL=http://localhost:3000
+SMTP_HOST=localhost
+SMTP_PORT=1025
+SMTP_SECURE=false
+SMTP_USER=
+SMTP_PASSWORD=
+MAIL_FROM=naPorta <no-reply@naporta.local>
 ```
 
 As variáveis `POSTGRES_*` configuram o container do banco; a aplicação
@@ -155,6 +163,11 @@ Regras:
 -   `CORS_ORIGINS` lista, separadas por vírgula, as origens liberadas no
     CORS (padrão `http://localhost:3000`, o frontend local). Outros sites
     precisam ser incluídos nessa variável; o README documenta como.
+-   `FRONTEND_URL` é a base dos links dos emails (o botão de acesso leva
+    a `<FRONTEND_URL>/login`).
+-   `SMTP_*` e `MAIL_FROM` configuram o envio de emails (seção 10.5). Os
+    padrões apontam para o Mailpit local do `compose.yaml`; em produção,
+    usar o SMTP de um provedor, com TLS e credenciais fora do código.
 -   Não registrar senhas, hashes, tokens ou segredos em logs.
 
 ## 6. Modelo de dados
@@ -173,6 +186,8 @@ Campos mínimos:
 -   `passwordHash` --- nunca armazenar senha em texto puro.
 -   `role` --- enum `ADMIN` ou `USER`.
 -   `isActive` --- indica se o usuário pode autenticar.
+-   `mustChangePassword` --- `true` enquanto o usuário não trocar a
+    senha temporária recebida no cadastro (seção 8.3); padrão `false`.
 -   `createdAt`
 -   `updatedAt`
 
@@ -189,6 +204,9 @@ Campos mínimos:
 -   `type` --- enum `PERSON` (CPF, 11 dígitos) ou `COMPANY` (CNPJ, 14
     caracteres), definido automaticamente a partir do documento; não é
     informado pelo cliente da API.
+-   `email` --- destino das notificações de pedido (seção 10.5),
+    normalizado para minúsculas. Obrigatório na API; no banco é
+    anulável apenas para clientes cadastrados antes do campo existir.
 -   `ordersCount` --- contagem persistida de pedidos ativos, não
     excluídos logicamente.
 -   `createdAt`
@@ -318,6 +336,7 @@ Formato esperado de sucesso do login:
       "email": "usuario@example.com",
       "role": "USER",
       "isActive": true,
+      "mustChangePassword": false,
       "createdAt": "2026-10-21T12:00:00.000Z",
       "updatedAt": "2026-10-21T12:00:00.000Z"
     }
@@ -345,6 +364,8 @@ Matriz de permissões:
   Editar pedido ativo                            Sim    Sim
   Excluir pedido logicamente                     Sim    Não
   Cadastrar usuário                              Sim    Não
+  Consultar o próprio usuário (`/auth/me`)       Sim    Sim
+  Trocar a própria senha                         Sim    Sim
 
 O acesso aos pedidos é compartilhado: um usuário pode consultar e editar
 pedidos criados por outro usuário. `createdById` é mantido para
@@ -353,6 +374,29 @@ auditoria, não para restringir consultas.
 Aplicar guards de autenticação e autorização nas rotas correspondentes.
 Uma chamada sem token válido retorna `401`; um usuário autenticado sem
 permissão retorna `403`.
+
+### 8.3 Primeiro acesso e troca de senha
+
+-   O usuário é cadastrado sem senha: o backend gera uma senha
+    temporária aleatória (16 caracteres, gerador criptográfico, sem
+    caracteres ambíguos e dentro da política de senha), grava apenas o
+    hash e a envia no email de boas-vindas (seção 10.5).
+-   O usuário nasce com `mustChangePassword = true`. O login funciona
+    normalmente e a resposta informa `mustChangePassword`.
+-   Enquanto `mustChangePassword` for `true`, o guard JWT retorna
+    `403 "Troque a senha temporária antes de continuar."` em todas as
+    rotas, exceto as marcadas com `@AllowPendingPasswordChange()`:
+    `GET /auth/me` e `POST /auth/change-password`.
+-   `POST /auth/change-password` recebe `currentPassword` e
+    `newPassword` (mesma política da seção 9.1), confere a senha atual,
+    rejeita nova senha igual à atual (`400`), grava o novo hash e define
+    `mustChangePassword = false`. O token atual passa a valer em todas
+    as rotas, sem novo login.
+-   A troca de senha também está disponível depois do primeiro acesso.
+-   A senha temporária não expira e não há fluxo de recuperação de senha
+    nesta versão.
+-   A senha temporária nunca é retornada pela API, registrada em log ou
+    armazenada em texto puro.
 
 ## 9. Contratos de User: Request, Response e DTOs
 
@@ -377,24 +421,31 @@ src/modules/users/
 
 ### 9.1 UserRequest
 
-A criação de usuário recebe senha no request:
+A criação de usuário **não recebe senha** (o body com `password` é
+rejeitado com `400`); a senha temporária é gerada pelo backend (seção
+8.3):
 
 ``` typescript
 export interface UserRequest {
   name: string;
   email: string;
-  password: string;
   role: 'ADMIN' | 'USER';
 }
 ```
 
 O endpoint de criação é exclusivo para `ADMIN`; não existe cadastro
 público. O papel solicitado deve ser validado contra os valores
-permitidos. A senha precisa cumprir uma política mínima documentada e
-ser transformada em hash (Argon2id) antes de persistir.
+permitidos. Toda senha é transformada em hash (Argon2id) antes de
+persistir.
 
-Política de senha: de 8 a 128 caracteres, com pelo menos uma letra e um
-número. O Argon2id não trunca a senha; o limite de 128 apenas evita
+O cadastro e o envio do email de boas-vindas são atômicos: o usuário é
+criado dentro de uma transação e o email é enviado antes do commit. Se
+o envio falhar, a transação é desfeita e a API retorna
+`503 Service Unavailable`; email duplicado retorna `409` sem enviar
+email.
+
+Política de senha (troca de senha e senhas do seed): de 8 a 128
+caracteres, com pelo menos uma letra e um número. O Argon2id não trunca a senha; o limite de 128 apenas evita
 custo excessivo com entradas enormes.
 
 ### 9.2 UserResponse
@@ -406,6 +457,7 @@ export interface UserResponse {
   email: string;
   role: 'ADMIN' | 'USER';
   isActive: boolean;
+  mustChangePassword: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -433,6 +485,17 @@ export interface LoginResponse {
 }
 ```
 
+Troca de senha:
+
+``` typescript
+export interface ChangePasswordRequest {
+  currentPassword: string;
+  newPassword: string;
+}
+```
+
+A resposta da troca de senha e de `GET /auth/me` é `UserResponse`.
+
 Aplicar a mesma regra de não exposição de credenciais em todos os
 endpoints.
 
@@ -443,14 +506,16 @@ endpoints.
 Ao criar um pedido:
 
 1.  Receber os dados do cliente necessários no request do pedido,
-    incluindo nome e documento (CPF ou CNPJ).
+    incluindo nome, documento (CPF ou CNPJ) e email.
 2.  Normalizar e validar o documento e definir o tipo (`PERSON`/`COMPANY`).
 3.  Procurar cliente pelo documento normalizado.
 4.  Se não existir, criar o cliente.
 5.  Se existir com o mesmo nome, reutilizar o cliente sem criar
     duplicata.
 6.  Se existir com nome diferente, atualizar o nome do cadastro do
-    cliente e retornar um aviso de negócio na resposta.
+    cliente e retornar um aviso de negócio na resposta. O mesmo vale
+    para email diferente (aviso `CUSTOMER_EMAIL_UPDATED`); se o
+    cliente não tinha email, ele é preenchido sem aviso.
 7.  Criar o pedido associado ao cliente e criar os itens.
 8.  Incrementar `ordersCount` do cliente.
 9.  Executar as operações relacionadas em uma única transação.
@@ -483,6 +548,15 @@ A mensagem varia com o tipo do cliente:
     atualizado."
 -   `COMPANY` (CNPJ): "CNPJ já cadastrado. A razão social foi
     atualizada."
+
+Para `CUSTOMER_EMAIL_UPDATED`:
+
+-   `PERSON` (CPF): "CPF já cadastrado. O email do cliente foi
+    atualizado."
+-   `COMPANY` (CNPJ): "CNPJ já cadastrado. O email da empresa foi
+    atualizado."
+
+Quando nome e email mudam juntos, os dois avisos são retornados.
 
 A estrutura final de `data` deve seguir o contrato completo de pedido.
 Incluir `warnings` apenas quando houver aviso.
@@ -523,6 +597,40 @@ diferente, atualizar o cadastro e incluir o warning apropriado.
     atomicamente.
 -   Usar transações Prisma e considerar conflitos de unicidade e
     concorrência.
+
+### 10.5 Notificações por email
+
+Envio por SMTP com Nodemailer (Mailpit em desenvolvimento), atrás da
+abstração `EmailSender`, substituída nos testes. Templates HTML com
+layout escuro, marca em texto "naPorta" e versão em texto puro; todo
+dado dinâmico é escapado no HTML.
+
+  -------------------------------------------------------------------------
+  Email                       Destinatário   Quando
+  --------------------------- -------------- ------------------------------
+  Boas-vindas com senha       Usuário        `POST /users`
+  temporária e botão de
+  acesso
+
+  Pedido recebido             Cliente        Pedido criado (texto distinto
+                                             para cliente recém-cadastrado)
+
+  Pedido vinculado            Novo cliente   `PATCH` troca o cliente
+
+  Status atualizado           Cliente        `PATCH` muda o status
+  -------------------------------------------------------------------------
+
+-   Emails de pedido trazem número, status, previsão de entrega,
+    endereço, itens, preços (BRL) e total.
+-   Boas-vindas: a falha no envio cancela o cadastro (seção 9.1).
+-   Pedidos: os emails saem somente depois do commit, em segundo plano;
+    falha no envio não desfaz nem atrasa a operação e é registrada em
+    log sem o email do destinatário.
+-   Na troca de cliente, apenas o novo cliente é avisado (um único
+    email, com o status atual); o cliente anterior não recebe email.
+-   Não há email quando a edição não altera status nem cliente, quando a
+    operação falha, na exclusão lógica, ou para clientes sem email.
+-   O seed não envia emails.
 
 ## 11. Edição de pedidos --- PATCH
 
@@ -579,7 +687,19 @@ Swagger.
   `POST`            `/auth/login`     Autenticar        Público
                                       usuário           
 
+  `GET`             `/auth/me`        Usuário           Autenticado
+                                      autenticado       (inclusive com
+                                                        troca de senha
+                                                        pendente)
+
+  `POST`            `/auth/change-    Trocar a senha    Autenticado
+                    password`         (seção 8.3)       (inclusive com
+                                                        troca de senha
+                                                        pendente)
+
   `POST`            `/users`          Cadastrar usuário ADMIN
+                                      e enviar senha
+                                      temporária
 
   `POST`            `/orders`         Criar pedido      ADMIN, USER
 
@@ -611,7 +731,8 @@ O request deve permitir informar:
 -   `orderNumber`;
 -   `expectedDeliveryDate`;
 -   `deliveryAddress`;
--   dados do cliente (`name` e documento CPF/CNPJ);
+-   dados do cliente (`name`, documento CPF/CNPJ e `email`, todos
+    obrigatórios);
 -   lista não vazia de itens, cada um com descrição e preço.
 
 O `status` inicial deve ser `PENDING`, definido pelo backend. O usuário
@@ -838,7 +959,11 @@ Cobrir, no mínimo:
 -   bloqueio de edição/exclusão de pedido excluído;
 -   substituição integral de itens no PATCH;
 -   validações de paginação e filtros;
--   mapeamento de erros e respostas públicas sem credenciais.
+-   mapeamento de erros e respostas públicas sem credenciais;
+-   geração de senha temporária, bloqueio `403` com troca de senha
+    pendente e troca de senha;
+-   templates de email (escape de HTML, itens e total) e regras de envio
+    (cliente sem email, falha registrada em log).
 
 ### 17.2 Testes de integração
 
@@ -858,7 +983,12 @@ teste isolado:
 -   filtros combinados e paginação;
 -   exclusão lógica excluída das consultas comuns;
 -   endpoints e autenticação/autorizações nos limites de integração
-    apropriados.
+    apropriados;
+-   fluxo de primeiro acesso completo e rollback do cadastro quando o
+    email de boas-vindas falha;
+-   emails de pedido e de status enviados (e não enviados) conforme a
+    seção 10.5, com o `EmailSender` substituído por uma implementação em
+    memória.
 
 Os testes devem ser determinísticos e não depender de serviços externos.
 Não usar o banco de desenvolvimento para testes destrutivos.
@@ -873,6 +1003,11 @@ a API e o PostgreSQL.
 Até a etapa 17, o `compose.yaml` executa apenas o PostgreSQL; a API roda
 localmente com `npm run start:dev`. Subir e parar o banco com
 `npm run db:up` e `npm run db:down`, que usam `.env.development`.
+
+O serviço `mailpit` (SMTP na porta 1025, interface em
+`http://localhost:8025`) sobe junto com o banco em `npm run db:up` e
+também no stack completo; a API em container envia para o host
+`mailpit`.
 
 -   Usar volumes para persistência local do banco.
 -   Configurar variáveis de ambiente.
@@ -894,7 +1029,11 @@ localmente com `npm run start:dev`. Subir e parar o banco com
 Criar seed reproduzível e idempotente com dados fictícios:
 
 -   Pelo menos **dois usuários**: um `ADMIN` e um `USER`.
--   Senhas de seed armazenadas como hashes.
+-   Senhas de seed armazenadas como hashes; usuários do seed com
+    `mustChangePassword = false`.
+-   Clientes com emails fictícios em domínio reservado (`example.com`);
+    clientes do seed sem email são preenchidos.
+-   O seed não envia emails.
 -   Pelo menos **20 pedidos fictícios**, com clientes, itens, status e
     datas variadas para demonstrar filtros e paginação.
 -   Dados suficientes para testar busca parcial por número e filtro por

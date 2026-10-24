@@ -1,5 +1,8 @@
 /** Códigos de aviso de negócio retornados em `warnings`. */
-export const API_WARNING_CODES = ['CUSTOMER_NAME_UPDATED'] as const;
+export const API_WARNING_CODES = [
+  'CUSTOMER_NAME_UPDATED',
+  'CUSTOMER_EMAIL_UPDATED',
+] as const;
 export type ApiWarningCode = (typeof API_WARNING_CODES)[number];
 
 /** Aviso de negócio: a operação foi concluída, mas merece atenção. */

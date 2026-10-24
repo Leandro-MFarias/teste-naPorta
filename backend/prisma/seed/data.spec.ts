@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { validateDto } from '../../test/validation.js';
+import { ChangePasswordDto } from '../../src/modules/auth/dto/change-password.dto.js';
 import { CreateUserDto } from '../../src/modules/users/dto/create-user.dto.js';
 import { CreateOrderDto } from '../../src/modules/orders/dto/create-order.dto.js';
 import { parseDocument } from '../../src/modules/customers/document.js';
@@ -11,9 +12,21 @@ describe('dados do seed', () => {
 
   it('tem um ADMIN e um USER com dados válidos para a API', async () => {
     expect(SEED_USERS.map((u) => u.role).sort()).toEqual(['ADMIN', 'USER']);
-    for (const user of SEED_USERS) {
+    for (const { password, ...user } of SEED_USERS) {
       const { errors } = await validateDto(CreateUserDto, user);
       expect(errors).toEqual([]);
+      // A senha de demonstração respeita a mesma política da troca de senha.
+      const policy = await validateDto(ChangePasswordDto, {
+        currentPassword: 'qualquer',
+        newPassword: password,
+      });
+      expect(policy.errors).toEqual([]);
+    }
+  });
+
+  it('tem clientes com email fictício em domínio reservado', () => {
+    for (const customer of SEED_CUSTOMERS) {
+      expect(customer.email).toMatch(/@([a-z0-9-]+\.)*example\.com$/);
     }
   });
 

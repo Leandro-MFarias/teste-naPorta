@@ -15,11 +15,16 @@ import { testJwtService } from '../../../test/auth.js';
 import { configureApp } from '../../app.setup.js';
 import { Role } from '../../generated/prisma/enums.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
+import { AllowPendingPasswordChange } from '../decorators/allow-pending-password-change.decorator.js';
 import { Auth } from '../decorators/auth.decorator.js';
 import { CurrentUser } from '../decorators/current-user.decorator.js';
 import { Public } from '../decorators/public.decorator.js';
 import type { AuthenticatedUser } from '../interfaces/authenticated-user.interface.js';
-import { INVALID_TOKEN_MESSAGE, JwtAuthGuard } from './jwt-auth.guard.js';
+import {
+  INVALID_TOKEN_MESSAGE,
+  JwtAuthGuard,
+  PASSWORD_CHANGE_REQUIRED_MESSAGE,
+} from './jwt-auth.guard.js';
 import { FORBIDDEN_MESSAGE, RolesGuard } from './roles.guard.js';
 
 const ADMIN_ID = '00000000-0000-4000-8000-000000000001';
@@ -45,6 +50,13 @@ class TestController {
     return { ok: true };
   }
 
+  @Auth()
+  @AllowPendingPasswordChange()
+  @Get('pending-allowed')
+  pendingAllowed(@CurrentUser() user: AuthenticatedUser): AuthenticatedUser {
+    return user;
+  }
+
   // Sem decorator: protegida por padrão.
   @Get('default')
   default(): { ok: true } {
@@ -52,7 +64,12 @@ class TestController {
   }
 }
 
-type UserRow = { id: string; role: Role; isActive: boolean };
+type UserRow = {
+  id: string;
+  role: Role;
+  isActive: boolean;
+  mustChangePassword?: boolean;
+};
 
 describe('JwtAuthGuard e RolesGuard', () => {
   const users = new Map<string, UserRow>();
@@ -200,5 +217,41 @@ describe('JwtAuthGuard e RolesGuard', () => {
     const res = await get('/test/admin', `Bearer ${staleToken}`);
 
     expect(res.status).toBe(403);
+  });
+
+  describe('primeiro acesso (mustChangePassword)', () => {
+    beforeEach(() => {
+      users.set(USER_ID, {
+        id: USER_ID,
+        role: 'USER',
+        isActive: true,
+        mustChangePassword: true,
+      });
+    });
+
+    it('retorna 403 nas rotas comuns até a troca da senha temporária', async () => {
+      const userToken = await token(USER_ID, 'USER');
+
+      await expect(get('/test/any', `Bearer ${userToken}`)).resolves.toEqual({
+        status: 403,
+        body: {
+          statusCode: 403,
+          message: PASSWORD_CHANGE_REQUIRED_MESSAGE,
+          error: 'FORBIDDEN',
+        },
+      });
+    });
+
+    it('libera rotas com @AllowPendingPasswordChange()', async () => {
+      const userToken = await token(USER_ID, 'USER');
+
+      await expect(
+        get('/test/pending-allowed', `Bearer ${userToken}`),
+      ).resolves.toEqual({ status: 200, body: { id: USER_ID, role: 'USER' } });
+    });
+
+    it('token inválido continua retornando 401 antes da checagem de senha', async () => {
+      await expect(get('/test/pending-allowed')).resolves.toEqual(unauthorized);
+    });
   });
 });

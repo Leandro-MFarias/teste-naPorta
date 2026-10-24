@@ -5,6 +5,8 @@ export interface CustomerRequest {
   name: string;
   /** CPF ou CNPJ, com ou sem pontuação. */
   document: string;
+  /** Recebe os emails de pedido e de mudança de status. */
+  email: string;
 }
 
 export interface OrderItemRequest {

@@ -6,6 +6,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import type { Response } from 'express';
+import { Public } from '../common/decorators/public.decorator.js';
 import { HealthResponseDto } from './health.dto.js';
 import { HealthService } from './health.service.js';
 
@@ -14,6 +15,7 @@ import { HealthService } from './health.service.js';
  * healthchecks de container. Responde 200 quando saudável e 503 quando
  * alguma dependência (o banco) estiver indisponível.
  */
+@Public()
 @ApiTags('Health')
 @Controller('health')
 export class HealthController {

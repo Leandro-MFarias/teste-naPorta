@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { TEST_JWT_SECRET } from '../test/auth.js';
 import { HealthModule } from './health/health.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
+import { UsersModule } from './modules/users/users.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { PrismaService } from './prisma/prisma.service.js';
 import { createSwaggerDocument } from './swagger.js';
@@ -24,6 +25,7 @@ describe('Swagger', () => {
         }),
         PrismaModule,
         AuthModule,
+        UsersModule,
         HealthModule,
       ],
     })
@@ -81,5 +83,24 @@ describe('Swagger', () => {
       },
     });
     expect(document.components?.schemas).toHaveProperty('LoginDataResponseDto');
+  });
+
+  it('documenta POST /users como exclusivo de ADMIN com Bearer', () => {
+    const operation = document.paths['/users']?.post;
+
+    expect(operation?.tags).toEqual(['Users']);
+    expect(operation?.security).toEqual([{ bearer: [] }]);
+    expect(Object.keys(operation?.responses ?? {}).sort()).toEqual([
+      '201',
+      '400',
+      '401',
+      '403',
+      '409',
+    ]);
+    expect(operation?.responses['403']).toMatchObject({
+      description: 'Acesso permitido apenas para: ADMIN.',
+    });
+    expect(document.components?.schemas).toHaveProperty('CreateUserDto');
+    expect(document.components?.schemas).toHaveProperty('UserDataResponseDto');
   });
 });

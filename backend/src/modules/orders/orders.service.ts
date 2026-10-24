@@ -1,7 +1,13 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import type { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface.js';
 import type {
   ApiResponse,
+  ApiWarning,
   PaginatedResponse,
 } from '../../common/interfaces/api-response.interface.js';
 import { Prisma } from '../../generated/prisma/client.js';
@@ -11,13 +17,18 @@ import type {
   CreateOrderRequest,
   ListOrdersQuery,
   OrderItemRequest,
+  UpdateOrderRequest,
 } from './interfaces/order-request.interface.js';
 import type { OrderResponse } from './interfaces/order-response.interface.js';
 import { toCreatedAtRange } from './order-period.js';
+import { canTransition, invalidTransitionMessage } from './order-status.js';
 import { toOrderResponse } from './order.mapper.js';
 
 export const ORDER_NUMBER_IN_USE_MESSAGE =
   'Já existe um pedido com este número.';
+export const ORDER_NOT_FOUND_MESSAGE = 'Pedido não encontrado.';
+
+const ORDER_INCLUDE = { customer: true, items: true } as const;
 
 @Injectable()
 export class OrdersService {
@@ -66,15 +77,103 @@ export class OrdersService {
         };
       });
     } catch (error) {
-      // O cliente usa ON CONFLICT; a única unicidade que pode falhar aqui
-      // é a do número do pedido.
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
-        throw new ConflictException(ORDER_NUMBER_IN_USE_MESSAGE);
-      }
-      throw error;
+      throw toOrderNumberConflict(error);
+    }
+  }
+
+  /** Pedido ativo por ID; excluídos logicamente retornam 404. */
+  async findOne(id: string): Promise<ApiResponse<OrderResponse>> {
+    const order = await this.prisma.order.findFirst({
+      where: { id, deletedAt: null },
+      include: ORDER_INCLUDE,
+    });
+    if (!order) {
+      throw new NotFoundException(ORDER_NOT_FOUND_MESSAGE);
+    }
+    return { data: toOrderResponse(order) };
+  }
+
+  /**
+   * Edição parcial (seção 11), toda em uma transação: campos omitidos não
+   * mudam; `items` substitui todos os itens; status só muda por transição
+   * permitida; troca de cliente ajusta ordersCount dos dois clientes.
+   */
+  async update(
+    id: string,
+    request: UpdateOrderRequest,
+  ): Promise<ApiResponse<OrderResponse>> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        // Bloqueia a linha até o fim da transação: edições e exclusões
+        // concorrentes do mesmo pedido esperam, em vez de validar a
+        // transição ou a contagem sobre um estado desatualizado.
+        const locked = await tx.$queryRaw<{ id: string }[]>`
+          SELECT id FROM orders
+          WHERE id = ${id}::uuid AND deleted_at IS NULL
+          FOR UPDATE`;
+        if (locked.length === 0) {
+          throw new NotFoundException(ORDER_NOT_FOUND_MESSAGE);
+        }
+        const current = await tx.order.findUniqueOrThrow({ where: { id } });
+
+        // Reenviar o status atual não é transição: é ignorado.
+        if (
+          request.status !== undefined &&
+          request.status !== current.status &&
+          !canTransition(current.status, request.status)
+        ) {
+          throw new BadRequestException(
+            invalidTransitionMessage(current.status, request.status),
+          );
+        }
+
+        let customerId = current.customerId;
+        let warning: ApiWarning | undefined;
+        if (request.customer) {
+          const resolved = await this.customers.resolve(tx, request.customer);
+          warning = resolved.warning;
+          customerId = resolved.customer.id;
+
+          if (customerId !== current.customerId) {
+            // O CHECK orders_count >= 0 do banco impede contagem negativa.
+            await tx.customer.update({
+              where: { id: current.customerId },
+              data: { ordersCount: { decrement: 1 } },
+            });
+            await tx.customer.update({
+              where: { id: customerId },
+              data: { ordersCount: { increment: 1 } },
+            });
+          }
+        }
+
+        const order = await tx.order.update({
+          where: { id },
+          data: {
+            orderNumber: request.orderNumber,
+            expectedDeliveryDate:
+              request.expectedDeliveryDate !== undefined
+                ? toDateOnly(request.expectedDeliveryDate)
+                : undefined,
+            deliveryAddress: request.deliveryAddress,
+            status: request.status,
+            customerId,
+            // Explícito para que mudanças só nos itens também atualizem.
+            updatedAt: new Date(),
+            ...(request.items && {
+              items: { deleteMany: {}, create: request.items.map(toItemData) },
+            }),
+          },
+          include: ORDER_INCLUDE,
+        });
+
+        return {
+          data: toOrderResponse(order),
+          ...(warning && { warnings: [warning] }),
+        };
+      });
+    } catch (error) {
+      throw toOrderNumberConflict(error);
     }
   }
 
@@ -107,7 +206,7 @@ export class OrdersService {
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           skip: (query.page - 1) * query.limit,
           take: query.limit,
-          include: { customer: true, items: true },
+          include: ORDER_INCLUDE,
         }),
       ],
       { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
@@ -123,6 +222,20 @@ export class OrdersService {
       },
     };
   }
+}
+
+/**
+ * A única unicidade que pode falhar nas escritas de pedido é a do número
+ * (o cliente usa ON CONFLICT); as demais exceções seguem inalteradas.
+ */
+function toOrderNumberConflict(error: unknown): unknown {
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === 'P2002'
+  ) {
+    return new ConflictException(ORDER_NUMBER_IN_USE_MESSAGE);
+  }
+  return error;
 }
 
 /**

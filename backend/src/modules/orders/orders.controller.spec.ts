@@ -20,6 +20,7 @@ import { PrismaService } from '../../prisma/prisma.service.js';
 import type {
   CreateOrderRequest,
   ListOrdersQuery,
+  UpdateOrderRequest,
 } from './interfaces/order-request.interface.js';
 import { OrdersController } from './orders.controller.js';
 import { OrdersService } from './orders.service.js';
@@ -224,5 +225,134 @@ describe('GET /orders', () => {
       ]) as unknown,
     });
     expect(findAll).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /orders/:id e PATCH /orders/:id', () => {
+  const ORDER_ID = '00000000-0000-4000-8000-0000000000a1';
+  const findOne = vi.fn<(id: string) => Promise<unknown>>();
+  const update =
+    vi.fn<(id: string, request: UpdateOrderRequest) => Promise<unknown>>();
+  const findUnique = vi.fn(() =>
+    Promise.resolve({ id: USER_ID, role: 'USER', isActive: true }),
+  );
+  let app: INestApplication;
+  let baseUrl: string;
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      controllers: [OrdersController],
+      providers: [
+        { provide: OrdersService, useValue: { findOne, update } },
+        { provide: JwtService, useValue: testJwtService },
+        { provide: PrismaService, useValue: { user: { findUnique } } },
+        { provide: APP_GUARD, useClass: JwtAuthGuard },
+        { provide: APP_GUARD, useClass: RolesGuard },
+      ],
+    }).compile();
+
+    app = moduleRef.createNestApplication({ logger: false });
+    configureApp(app);
+    await app.listen(0);
+    baseUrl = await app.getUrl();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(() => {
+    findOne.mockReset().mockResolvedValue({ data: { id: ORDER_ID } });
+    update.mockReset().mockResolvedValue({ data: { id: ORDER_ID } });
+  });
+
+  async function request(
+    method: string,
+    path: string,
+    payload?: unknown,
+    authenticated = true,
+  ) {
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+    };
+    if (authenticated) {
+      const token = await testJwtService.signAsync({
+        sub: USER_ID,
+        role: 'USER',
+      });
+      headers.authorization = `Bearer ${token}`;
+    }
+    const res = await fetch(`${baseUrl}/orders/${path}`, {
+      method,
+      headers,
+      body: payload === undefined ? undefined : JSON.stringify(payload),
+    });
+    return { status: res.status, body: (await res.json()) as unknown };
+  }
+
+  it('GET retorna 401 sem token', async () => {
+    const res = await request('GET', ORDER_ID, undefined, false);
+
+    expect(res.status).toBe(401);
+    expect(findOne).not.toHaveBeenCalled();
+  });
+
+  it('GET repassa o id ao serviço', async () => {
+    const res = await request('GET', ORDER_ID);
+
+    expect(res).toEqual({ status: 200, body: { data: { id: ORDER_ID } } });
+    expect(findOne).toHaveBeenCalledWith(ORDER_ID);
+  });
+
+  it.each(['GET', 'PATCH'])('%s rejeita id que não é UUID', async (method) => {
+    const res = await request(
+      method,
+      'abc',
+      method === 'PATCH' ? {} : undefined,
+    );
+
+    expect(res).toEqual({
+      status: 400,
+      body: {
+        statusCode: 400,
+        message: 'id deve ser um UUID válido',
+        error: 'BAD_REQUEST',
+      },
+    });
+    expect(findOne).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('PATCH permite USER e repassa só os campos enviados', async () => {
+    const res = await request('PATCH', ORDER_ID, {
+      status: 'CONFIRMED',
+      deliveryAddress: ' Rua B ',
+    });
+
+    expect(res.status).toBe(200);
+    expect(update).toHaveBeenCalledWith(ORDER_ID, {
+      status: 'CONFIRMED',
+      deliveryAddress: 'Rua B',
+    });
+  });
+
+  it('PATCH rejeita items vazio, null e campos desconhecidos sem chamar o serviço', async () => {
+    const res = await request('PATCH', ORDER_ID, {
+      items: [],
+      orderNumber: null,
+      status: 'LOST',
+      createdById: USER_ID,
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({
+      message: expect.arrayContaining([
+        'items deve ter pelo menos um item',
+        'orderNumber é obrigatório',
+        'status deve ser um status de pedido válido',
+        'property createdById should not exist',
+      ]) as unknown,
+    });
+    expect(update).not.toHaveBeenCalled();
   });
 });

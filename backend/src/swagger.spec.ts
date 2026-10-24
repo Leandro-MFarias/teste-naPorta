@@ -145,4 +145,30 @@ describe('Swagger', () => {
     ]);
     expect(document.components?.schemas).toHaveProperty('OrderListResponseDto');
   });
+
+  it('documenta GET e PATCH /orders/{id}', () => {
+    const path = document.paths['/orders/{id}'];
+
+    expect(Object.keys(path?.get?.responses ?? {}).sort()).toEqual([
+      '200',
+      '400',
+      '401',
+      '404',
+    ]);
+    expect(Object.keys(path?.patch?.responses ?? {}).sort()).toEqual([
+      '200',
+      '400',
+      '401',
+      '404',
+      '409',
+    ]);
+    expect(path?.patch?.security).toEqual([{ bearer: [] }]);
+    expect(path?.patch?.requestBody).toMatchObject({
+      content: {
+        'application/json': {
+          schema: { $ref: '#/components/schemas/UpdateOrderDto' },
+        },
+      },
+    });
+  });
 });

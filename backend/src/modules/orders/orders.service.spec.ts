@@ -1,4 +1,8 @@
-import { ConflictException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -16,6 +20,7 @@ import {
 import type { CreateOrderRequest } from './interfaces/order-request.interface.js';
 import {
   escapeLikePattern,
+  ORDER_NOT_FOUND_MESSAGE,
   ORDER_NUMBER_IN_USE_MESSAGE,
   OrdersService,
 } from './orders.service.js';
@@ -300,5 +305,263 @@ describe('escapeLikePattern', () => {
   it('escapa curingas do LIKE e a barra', () => {
     expect(escapeLikePattern('PED-100')).toBe('PED-100');
     expect(escapeLikePattern('10%_a\\b')).toBe('10\\%\\_a\\\\b');
+  });
+});
+
+describe('OrdersService.findOne', () => {
+  const findFirst = vi.fn<(args: unknown) => Promise<unknown>>();
+  let service: OrdersService;
+
+  beforeEach(async () => {
+    findFirst.mockReset();
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        OrdersService,
+        { provide: PrismaService, useValue: { order: { findFirst } } },
+        { provide: CustomersService, useValue: {} },
+      ],
+    }).compile();
+    service = moduleRef.get(OrdersService);
+  });
+
+  it('busca só pedidos ativos e retorna { data }', async () => {
+    findFirst.mockResolvedValue({
+      id: 'o1',
+      orderNumber: 'PED-1001',
+      expectedDeliveryDate: new Date('2026-11-15T00:00:00.000Z'),
+      deliveryAddress: 'Rua',
+      status: 'PENDING',
+      customerId: customer.id,
+      createdById: USER.id,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      deletedAt: null,
+      customer,
+      items: [],
+    });
+
+    const result = await service.findOne('o1');
+
+    expect(findFirst).toHaveBeenCalledWith({
+      where: { id: 'o1', deletedAt: null },
+      include: { customer: true, items: true },
+    });
+    expect(result.data).toMatchObject({ id: 'o1', orderNumber: 'PED-1001' });
+  });
+
+  it('retorna 404 para pedido inexistente ou excluído', async () => {
+    findFirst.mockResolvedValue(null);
+
+    await expect(service.findOne('o1')).rejects.toThrow(
+      new NotFoundException(ORDER_NOT_FOUND_MESSAGE),
+    );
+  });
+});
+
+describe('OrdersService.update', () => {
+  const ORDER_ID = 'o0000000-0000-4000-8000-000000000001';
+  const otherCustomer: Customer = {
+    ...customer,
+    id: 'c0000000-0000-4000-8000-000000000002',
+    name: 'Empresa X',
+    document: '12ABC34501DE35',
+    type: 'COMPANY',
+  };
+  const current: Order = {
+    id: ORDER_ID,
+    orderNumber: 'PED-1001',
+    expectedDeliveryDate: new Date('2026-11-15T00:00:00.000Z'),
+    deliveryAddress: 'Rua das Flores, 123',
+    status: 'PENDING',
+    customerId: customer.id,
+    createdById: USER.id,
+    createdAt: new Date('2026-10-24T12:00:00.000Z'),
+    updatedAt: new Date('2026-10-24T12:00:00.000Z'),
+    deletedAt: null,
+  };
+
+  const queryRaw = vi.fn<() => Promise<{ id: string }[]>>();
+  const findUniqueOrThrow = vi.fn<() => Promise<Order>>();
+  type UpdateArgs = { where: unknown; data: Record<string, unknown> };
+  const orderUpdate = vi.fn<(args: UpdateArgs) => Promise<unknown>>();
+  const customerUpdate = vi.fn<(args: unknown) => Promise<Customer>>();
+  const resolve =
+    vi.fn<(tx: unknown, input: unknown) => Promise<ResolvedCustomer>>();
+  const tx = {
+    $queryRaw: queryRaw,
+    order: { findUniqueOrThrow, update: orderUpdate },
+    customer: { update: customerUpdate },
+  };
+  const $transaction = vi.fn((fn: (client: typeof tx) => Promise<unknown>) =>
+    fn(tx),
+  );
+  let service: OrdersService;
+
+  beforeEach(async () => {
+    queryRaw.mockReset().mockResolvedValue([{ id: ORDER_ID }]);
+    findUniqueOrThrow.mockReset().mockResolvedValue(current);
+    customerUpdate.mockReset().mockResolvedValue(customer);
+    resolve.mockReset().mockResolvedValue({ customer });
+    orderUpdate.mockReset().mockImplementation(({ data }) =>
+      Promise.resolve({
+        ...current,
+        ...Object.fromEntries(
+          Object.entries(data).filter(([, v]) => v !== undefined),
+        ),
+        customer:
+          data.customerId === otherCustomer.id ? otherCustomer : customer,
+        items: [],
+      }),
+    );
+
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        OrdersService,
+        { provide: PrismaService, useValue: { $transaction } },
+        { provide: CustomersService, useValue: { resolve } },
+      ],
+    }).compile();
+    service = moduleRef.get(OrdersService);
+  });
+
+  function updateData(): Record<string, unknown> {
+    return orderUpdate.mock.calls[0][0].data;
+  }
+
+  it('retorna 404 sem alterar nada quando o pedido não está ativo', async () => {
+    queryRaw.mockResolvedValue([]);
+
+    await expect(
+      service.update(ORDER_ID, { deliveryAddress: 'Rua B' }),
+    ).rejects.toThrow(new NotFoundException(ORDER_NOT_FOUND_MESSAGE));
+    expect(orderUpdate).not.toHaveBeenCalled();
+  });
+
+  it('mantém campos omitidos e itens quando items não é enviado', async () => {
+    await service.update(ORDER_ID, { deliveryAddress: 'Rua B' });
+
+    expect(orderUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: ORDER_ID } }),
+    );
+    expect(updateData()).toMatchObject({
+      orderNumber: undefined,
+      expectedDeliveryDate: undefined,
+      deliveryAddress: 'Rua B',
+      status: undefined,
+      customerId: customer.id,
+      updatedAt: expect.any(Date) as unknown,
+    });
+    expect(updateData()).not.toHaveProperty('items');
+    expect(resolve).not.toHaveBeenCalled();
+    expect(customerUpdate).not.toHaveBeenCalled();
+  });
+
+  it('substitui todos os itens e converte a data', async () => {
+    await service.update(ORDER_ID, {
+      expectedDeliveryDate: '2026-12-01',
+      items: [{ description: 'Novo', price: 9.9 }],
+    });
+
+    const data = updateData();
+    expect(data.expectedDeliveryDate).toEqual(
+      new Date('2026-12-01T00:00:00.000Z'),
+    );
+    const items = data.items as {
+      deleteMany: object;
+      create: { description: string; price: Prisma.Decimal }[];
+    };
+    expect(items.deleteMany).toEqual({});
+    expect(
+      items.create.map((i) => [i.description, i.price.toFixed(2)]),
+    ).toEqual([['Novo', '9.90']]);
+  });
+
+  it('aplica transição permitida', async () => {
+    await service.update(ORDER_ID, { status: 'CONFIRMED' });
+
+    expect(updateData().status).toBe('CONFIRMED');
+  });
+
+  it('aceita reenviar o status atual', async () => {
+    await expect(
+      service.update(ORDER_ID, { status: 'PENDING' }),
+    ).resolves.toBeDefined();
+  });
+
+  it('rejeita transição não permitida antes de qualquer escrita', async () => {
+    await expect(
+      service.update(ORDER_ID, {
+        status: 'SHIPPED',
+        customer: { name: 'Empresa X', document: '12ABC34501DE35' },
+      }),
+    ).rejects.toThrow(BadRequestException);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(orderUpdate).not.toHaveBeenCalled();
+  });
+
+  it('rejeita qualquer mudança a partir de status final', async () => {
+    findUniqueOrThrow.mockResolvedValue({ ...current, status: 'DELIVERED' });
+
+    await expect(
+      service.update(ORDER_ID, { status: 'CANCELED' }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('troca de cliente: decrementa o anterior e incrementa o novo', async () => {
+    resolve.mockResolvedValue({ customer: otherCustomer });
+
+    const result = await service.update(ORDER_ID, {
+      customer: { name: 'Empresa X', document: '12ABC34501DE35' },
+    });
+
+    expect(resolve).toHaveBeenCalledWith(tx, {
+      name: 'Empresa X',
+      document: '12ABC34501DE35',
+    });
+    expect(customerUpdate.mock.calls).toEqual([
+      [
+        {
+          where: { id: customer.id },
+          data: { ordersCount: { decrement: 1 } },
+        },
+      ],
+      [
+        {
+          where: { id: otherCustomer.id },
+          data: { ordersCount: { increment: 1 } },
+        },
+      ],
+    ]);
+    expect(updateData().customerId).toBe(otherCustomer.id);
+    expect(result.data.customer.id).toBe(otherCustomer.id);
+    expect(result).not.toHaveProperty('warnings');
+  });
+
+  it('mesmo cliente com outro nome: não mexe na contagem e retorna aviso', async () => {
+    const warning = customerNameUpdatedWarning('PERSON');
+    resolve.mockResolvedValue({
+      customer: { ...customer, name: 'João Silva' },
+      warning,
+    });
+
+    const result = await service.update(ORDER_ID, {
+      customer: { name: 'João Silva', document: '52998224725' },
+    });
+
+    expect(customerUpdate).not.toHaveBeenCalled();
+    expect(result.warnings).toEqual([warning]);
+  });
+
+  it('converte número de pedido duplicado em 409', async () => {
+    orderUpdate.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+      }),
+    );
+
+    await expect(
+      service.update(ORDER_ID, { orderNumber: 'PED-2000' }),
+    ).rejects.toThrow(new ConflictException(ORDER_NUMBER_IN_USE_MESSAGE));
   });
 });

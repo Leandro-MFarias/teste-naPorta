@@ -1,10 +1,22 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
   ApiCreatedResponse,
+  ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
+  ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
 import { Auth } from '../../common/decorators/auth.decorator.js';
@@ -17,7 +29,12 @@ import {
   OrderDataResponseDto,
   OrderListResponseDto,
 } from './dto/order-response.dto.js';
+import { UpdateOrderDto } from './dto/update-order.dto.js';
 import { OrdersService } from './orders.service.js';
+
+const OrderIdPipe = new ParseUUIDPipe({
+  exceptionFactory: () => new BadRequestException('id deve ser um UUID válido'),
+});
 
 @ApiTags('Orders')
 @Auth()
@@ -68,5 +85,58 @@ export class OrdersController {
   })
   findAll(@Query() query: ListOrdersQueryDto): Promise<OrderListResponseDto> {
     return this.ordersService.findAll(query);
+  }
+
+  @Get(':id')
+  @ApiOperation({
+    summary: 'Consulta um pedido ativo',
+    description: 'ADMIN ou USER. Pedidos excluídos logicamente retornam 404.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({
+    description: 'Pedido encontrado.',
+    type: OrderDataResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'id não é um UUID válido.',
+    type: ErrorResponseDto,
+  })
+  @ApiNotFoundResponse({
+    description: 'Pedido inexistente ou excluído.',
+    type: ErrorResponseDto,
+  })
+  findOne(@Param('id', OrderIdPipe) id: string): Promise<OrderDataResponseDto> {
+    return this.ordersService.findOne(id);
+  }
+
+  @Patch(':id')
+  @ApiOperation({
+    summary: 'Edita um pedido ativo',
+    description:
+      'ADMIN ou USER. Edição parcial: campos omitidos permanecem inalterados. `items`, quando enviado, substitui todos os itens (lista vazia é rejeitada). `status` só aceita transições permitidas (PENDING → CONFIRMED/CANCELED, CONFIRMED → IN_PREPARATION/CANCELED, IN_PREPARATION → SHIPPED/CANCELED, SHIPPED → DELIVERED); reenviar o status atual não altera nada. `customer` reutiliza a regra de CPF/CNPJ da criação: com outro documento, o pedido passa para esse cliente; com o mesmo documento e outro nome, o nome é atualizado e a resposta inclui um aviso em `warnings`. Tudo acontece em uma única transação.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({
+    description: 'Pedido atualizado.',
+    type: OrderDataResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description:
+      'Dados inválidos, id não UUID ou transição de status não permitida.',
+    type: ErrorResponseDto,
+  })
+  @ApiNotFoundResponse({
+    description: 'Pedido inexistente ou excluído.',
+    type: ErrorResponseDto,
+  })
+  @ApiConflictResponse({
+    description: 'Já existe um pedido com este número.',
+    type: ErrorResponseDto,
+  })
+  update(
+    @Param('id', OrderIdPipe) id: string,
+    @Body() dto: UpdateOrderDto,
+  ): Promise<OrderDataResponseDto> {
+    return this.ordersService.update(id, dto);
   }
 }

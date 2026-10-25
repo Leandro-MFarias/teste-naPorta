@@ -2,7 +2,7 @@ name: naporta
 
 # Valores vêm do arquivo passado em --env-file (ex.: .env.development).
 # - `npm run db:up`     sobe o PostgreSQL e o Mailpit (API local com start:dev);
-# - `npm run docker:up` sobe também as migrations e a API
+# - `npm run docker:up` sobe também as migrations, a API e o frontend
 #   (serviços do profile "app").
 
 x-app-environment: &app-environment
@@ -83,6 +83,22 @@ services:
       migrate:
         condition: service_completed_successfully
       mailpit:
+        condition: service_healthy
+
+  # Frontend Next.js (../frontend). Fala com a API pela rede do Compose;
+  # o navegador só acessa o frontend.
+  web:
+    profiles: [app]
+    build:
+      context: ../frontend
+      target: runtime
+    restart: unless-stopped
+    environment:
+      API_URL: http://api:3333
+    ports:
+      - '${WEB_PORT:-3000}:3000'
+    depends_on:
+      api:
         condition: service_healthy
 
 volumes:

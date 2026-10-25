@@ -1,0 +1,17 @@
+# Nunca enviar segredos para o contexto de build.
+.env
+.env.*
+!.env.example
+
+node_modules
+.next
+out
+coverage
+*.tsbuildinfo
+next-env.d.ts
+*.log
+.git
+.vscode
+.idea
+Dockerfile
+.dockerignore

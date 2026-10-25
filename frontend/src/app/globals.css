@@ -1,0 +1,46 @@
+@import 'tailwindcss';
+
+/*
+ * Paleta derivada do template de email da naPorta: laranja da marca
+ * (#EE6F16) com suas variações e os tons escuros do card (#212429).
+ */
+@theme {
+  --color-brand-50: #fff6ed;
+  --color-brand-100: #ffead5;
+  --color-brand-200: #fdd0aa;
+  --color-brand-300: #f9ae74;
+  --color-brand-400: #f5a05c;
+  --color-brand-500: #ee6f16;
+  --color-brand-600: #d45a0c;
+  --color-brand-700: #b0460d;
+  --color-brand-800: #8c3912;
+  --color-brand-900: #713012;
+
+  --color-ink-50: #f7f7f8;
+  --color-ink-100: #eeeff1;
+  --color-ink-200: #dcdee2;
+  --color-ink-300: #bfc3c9;
+  --color-ink-400: #8f98a0;
+  --color-ink-500: #6b737c;
+  --color-ink-600: #4d545c;
+  --color-ink-700: #33373d;
+  --color-ink-800: #212429;
+  --color-ink-900: #17191c;
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  background: var(--color-ink-50);
+  color: var(--color-ink-900);
+}
+
+::selection {
+  background: var(--color-brand-200);
+  color: var(--color-ink-900);
+}

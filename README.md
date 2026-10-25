@@ -1,22 +1,43 @@
-# naPorta API
+# naPorta
 
-API REST para gestão de pedidos de entrega: autenticação de usuários com
+API REST e portal web para gestão de pedidos de entrega: autenticação de usuários com
 primeiro acesso por senha temporária enviada por email, cadastro de
 pedidos com itens, criação e reutilização automática de clientes por
 CPF/CNPJ, controle de status com notificação do cliente por email e
-exclusão lógica.
+exclusão lógica. O portal ([`frontend/`](frontend), Next.js) consome a
+API: login, primeiro acesso, pedidos e cadastro de usuários.
 
-Este repositório contém apenas o backend. O plano completo da fundação
-está em [`docs/PLANO_FUNDACAO.md`](docs/PLANO_FUNDACAO.md).
+## Estrutura do repositório
+
+| Caminho | Conteúdo |
+| --- | --- |
+| [`backend/`](backend) | API NestJS (código, Prisma, testes, Dockerfile e Compose) |
+| [`frontend/`](frontend) | Portal web Next.js (veja [Frontend (Next.js)](#frontend-nextjs)) |
+| [`.github/workflows/`](.github/workflows) | Workflows do GitHub Actions |
+| `package.json` (raiz) | Ferramentas do repositório: Husky, commitlint, Commitizen e secretlint |
+
+O plano completo da fundação está em
+[`backend/docs/PLANO_FUNDACAO.md`](backend/docs/PLANO_FUNDACAO.md).
+
+> **Onde rodar os comandos:** salvo indicação contrária (como em
+> [Hooks de git](#hooks-de-git-husky), que roda na raiz, e em
+> [Frontend (Next.js)](#frontend-nextjs), que roda em `frontend/`), todos
+> os comandos deste README são executados dentro de `backend/`:
+>
+> ```bash
+> cd backend
+> ```
 
 ## Sumário
 
+- [Estrutura do repositório](#estrutura-do-repositório)
 - [API First e arquitetura](#api-first-e-arquitetura)
 - [Stack](#stack)
 - [Pré-requisitos](#pré-requisitos)
+- [Como instalar e rodar](#como-instalar-e-rodar)
 - [Configuração (.env)](#configuração-env)
-- [Execução local](#execução-local)
 - [Execução com Docker Compose](#execução-com-docker-compose)
+- [Frontend (Next.js)](#frontend-nextjs)
 - [Prisma: client, migrations e seed](#prisma-client-migrations-e-seed)
 - [Scripts](#scripts)
 - [Testes](#testes)
@@ -86,6 +107,133 @@ test/
 - Node.js 24 e npm
 - Docker com Docker Compose v2
 
+## Como instalar e rodar
+
+Passo a passo do clone até o login no portal. Banco (PostgreSQL) e
+Mailpit rodam no Docker; a API e o portal rodam na sua máquina. Use
+dois terminais: um para a API e outro para o portal. Antes de começar,
+confira os [pré-requisitos](#pré-requisitos) e deixe o Docker aberto.
+
+### 1. Clonar o repositório
+
+```bash
+git clone https://github.com/Leandro-MFarias/teste-naPorta.git
+cd teste-naPorta
+```
+
+### 2. Configurar o `.env` da API
+
+```bash
+cd backend
+cp .env.example .env.development
+```
+
+O `.env.example` já vem pronto para rodar localmente, então não há nada
+obrigatório para editar. Revise só estes pontos:
+
+| Variável | Precisa mudar? |
+| --- | --- |
+| `JWT_SECRET` | Recomendado: troque o valor de exemplo por um aleatório, gerado com `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"` |
+| `POSTGRES_PORT`, `PORT`, `MAILPIT_SMTP_PORT`, `MAILPIT_UI_PORT` | Só se as portas `5432`, `3333`, `1025` ou `8025` já estiverem em uso na sua máquina. Se mudar `POSTGRES_PORT`, ajuste a porta na `DATABASE_URL` também |
+| Demais variáveis | Não. Os padrões já apontam para o banco e o Mailpit do Docker e para o portal em `http://localhost:3000` |
+
+A lista completa está em [Configuração (.env)](#configuração-env).
+
+### 3. Instalar as dependências e preparar o banco
+
+Ainda em `backend/`:
+
+```bash
+npm install                    # dependências da API (gera também o Prisma Client)
+npm run db:up                  # sobe PostgreSQL e Mailpit no Docker
+npm run prisma:migrate:deploy  # cria as tabelas
+npm run prisma:seed            # cria os usuários de acesso e pedidos de exemplo
+```
+
+O seed é necessário para entrar no portal: ele cria o primeiro
+administrador. Sem o seed, não existe nenhum usuário para fazer login.
+
+### 4. Subir a API
+
+Ainda em `backend/`:
+
+```bash
+npm run start:dev
+```
+
+Deixe este terminal aberto. A API fica em `http://localhost:3333`, e a
+documentação interativa (Swagger) em `http://localhost:3333/api/docs`.
+
+### 5. Configurar e subir o portal
+
+Em um **segundo terminal**, a partir da raiz do repositório:
+
+```bash
+cd frontend
+cp .env.example .env.local     # API_URL=http://localhost:3333, sem nada para editar
+npm install
+npm run dev
+```
+
+### 6. Acessar o portal
+
+Abra `http://localhost:3000` e entre com um dos usuários criados pelo
+seed:
+
+| Papel | Email | Senha | O que pode fazer |
+| --- | --- | --- | --- |
+| ADMIN | `admin@example.com` | `Admin12345` | Tudo, inclusive cadastrar usuários e excluir pedidos |
+| USER | `user@example.com` | `User12345` | Listar, cadastrar, editar e mudar o status de pedidos |
+
+| Serviço | Endereço |
+| --- | --- |
+| Portal | `http://localhost:3000` |
+| API | `http://localhost:3333` |
+| Swagger | `http://localhost:3333/api/docs` |
+| Mailpit (emails enviados) | `http://localhost:8025` |
+
+### 7. Ver os emails (primeiro acesso)
+
+Nenhum email sai para a internet: o Mailpit captura todos em
+`http://localhost:8025`. Para testar o fluxo de primeiro acesso:
+
+1. Entre como ADMIN e cadastre um usuário em **Novo usuário**.
+2. Abra o Mailpit e copie a senha temporária do email de boas-vindas.
+3. Saia da conta, entre com o email do novo usuário e essa senha.
+4. O portal pede a troca da senha antes de liberar o restante.
+
+Os emails de mudança de status dos pedidos também aparecem no Mailpit.
+
+### Parar e voltar a rodar
+
+- **Parar:** `Ctrl+C` nos dois terminais e, em `backend/`,
+  `npm run db:down`. Os dados do banco ficam guardados no volume
+  `postgres-data`.
+- **Rodar de novo:** `npm run start:dev` em `backend/` (ele sobe o banco
+  e o Mailpit sozinho) e `npm run dev` em `frontend/`. Migrations e seed
+  só precisam ser repetidos quando houver migrations novas no
+  repositório (`npm run prisma:migrate:deploy`).
+
+### Problemas comuns
+
+| Sintoma | Causa e solução |
+| --- | --- |
+| "Email ou senha inválidos." com o usuário do seed | O seed não rodou. Execute `npm run prisma:seed` em `backend/` |
+| `npm run db:up` falha ou não conecta | O Docker não está aberto, ou a porta `5432` já está em uso (mude `POSTGRES_PORT` e a `DATABASE_URL`) |
+| A API não sobe e lista variáveis inválidas | O `.env.development` não existe em `backend/`, ou há um valor inválido nele (passo 2) |
+| O portal mostra "Não foi possível conectar à API." | A API não está rodando (passo 4) ou o `API_URL` do `frontend/.env.local` aponta para a porta errada |
+
+> **Tudo em containers (alternativa):** depois do passo 2, rode
+> `npm run docker:up` e `npm run docker:seed` em `backend/`. Isso sobe
+> banco, Mailpit, migrations, API e portal juntos, sem `npm install`
+> (veja [Execução com Docker Compose](#execução-com-docker-compose)).
+> Depois siga a partir do passo 6.
+
+> **Para contribuir:** rode também `npm install` na **raiz** do
+> repositório. Isso ativa os hooks de git (veja
+> [Hooks de git](#hooks-de-git-husky)). Para só rodar o projeto, não é
+> preciso.
+
 ## Configuração (.env)
 
 A aplicação e o Prisma CLI carregam `.env.<NODE_ENV>` (padrão
@@ -121,35 +269,24 @@ As variáveis são validadas na inicialização: valores ausentes ou
 inválidos impedem a aplicação de subir. Arquivos `.env` e `.env.*`
 (exceto `.env.example`) não são versionados.
 
-## Execução local
-
-API rodando na máquina, PostgreSQL no Docker:
-
-```bash
-npm install            # também executa prisma generate (postinstall)
-npm run db:up          # sobe o PostgreSQL e o Mailpit e espera ficarem saudáveis
-npm run prisma:migrate:deploy
-npm run prisma:seed    # opcional: dados de demonstração
-npm run start:dev      # API em http://localhost:3333 (sobe o banco se preciso)
-```
-
-Os emails enviados aparecem no Mailpit: `http://localhost:8025`. Para
-parar banco e Mailpit: `npm run db:down` (os dados do banco ficam no
-volume `postgres-data`).
-
 ## Execução com Docker Compose
 
 Sobe PostgreSQL e Mailpit, aplica as migrations e sobe a API em
 container:
 
 ```bash
-npm run docker:up      # build das imagens + db + mailpit + migrate + api
+npm run docker:up      # build das imagens + db + mailpit + migrate + api + web
 npm run docker:seed    # opcional: seed dentro do container
 npm run docker:down    # para e remove os containers (o volume é mantido)
 ```
 
-- A API fica em `http://localhost:${API_PORT}` (padrão `3333`). Não rode
-  `start:dev` ao mesmo tempo na mesma porta.
+- A API fica em `http://localhost:${API_PORT}` (padrão `3333`) e o
+  portal em `http://localhost:${WEB_PORT}` (padrão `3000`). Não rode
+  `start:dev` ou `npm run dev` do frontend ao mesmo tempo nas mesmas
+  portas.
+- O serviço `web` (imagem de `frontend/Dockerfile`) chama a API pela rede
+  do Compose (`http://api:3333`) e só sobe depois que a API está
+  saudável.
 - O serviço `migrate` executa `prisma migrate deploy` e termina; a API
   só sobe depois que ele conclui com sucesso.
 - Dentro do Compose a API envia emails pelo host `mailpit` (porta 1025)
@@ -160,8 +297,57 @@ npm run docker:down    # para e remove os containers (o volume é mantido)
 - A imagem da API (`Dockerfile`, estágio `runtime`) roda como usuário
   sem privilégios, com `NODE_ENV=production`, healthcheck em `/health` e
   nenhum segredo embutido: tudo chega por variável de ambiente.
-- `npm run db:up` sobe apenas o PostgreSQL e o Mailpit; a API e o
-  `migrate` pertencem ao profile `app` do Compose.
+- `npm run db:up` sobe apenas o PostgreSQL e o Mailpit; a API, o
+  `migrate` e o `web` pertencem ao profile `app` do Compose.
+
+## Frontend (Next.js)
+
+Portal em [`frontend/`](frontend): Next.js 16 (App Router, Cache
+Components), React 19, TypeScript e Tailwind CSS 4. O visual segue o
+template de email: laranja da marca (`#EE6F16`) e suas variações, com os
+tons escuros do card na barra lateral. Comandos desta seção rodam em
+`frontend/`.
+
+```bash
+cp .env.example .env.local   # API_URL (padrão http://localhost:3333)
+npm install
+npm run dev                  # http://localhost:3000 (API rodando na 3333)
+```
+
+| Rota | Quem acessa | O que faz |
+| --- | --- | --- |
+| `/login` | Público | Login; volta para a página pedida (`?next=`) |
+| `/primeiro-acesso` | Logado com senha temporária | Troca obrigatória da senha recebida por email |
+| `/pedidos` | ADMIN e USER | Listagem com filtros (número, status, período) e paginação na URL |
+| `/pedidos/novo` | ADMIN e USER | Cadastro com itens dinâmicos, máscara e validação de CPF/CNPJ e total |
+| `/pedidos/[id]` | ADMIN e USER | Detalhe, linha do tempo e mudança de status; exclusão só para ADMIN |
+| `/pedidos/[id]/editar` | ADMIN e USER | Edição (os itens enviados substituem os atuais) |
+| `/usuarios/novo` | ADMIN | Cadastro de usuário (senha temporária enviada por email) |
+| `/perfil` | ADMIN e USER | Dados da conta e troca de senha |
+
+- **Sessão:** o login roda em uma Server Action, que guarda o access
+  token em um cookie `httpOnly` (`sameSite=lax`, `secure` em produção,
+  validade igual à do token). O JavaScript do navegador nunca lê o
+  token, e o navegador nunca chama a API: Server Components e Server
+  Actions chamam a API pelo servidor do Next.js (`API_URL`). Por isso o
+  frontend não depende do CORS da API.
+- `src/proxy.ts` redireciona para `/login` quem não tem o cookie (checagem
+  otimista); a validação real é feita pela API em cada chamada. Resposta
+  401 encerra a sessão (`/sair`) e 403 de senha pendente leva a
+  `/primeiro-acesso`.
+- Avisos da API (`warnings`, ex.: nome do cliente atualizado) aparecem
+  no detalhe do pedido depois de criar ou editar. Erros de validação
+  aparecem no campo correspondente.
+- Docker: `frontend/Dockerfile` gera a imagem standalone (usuário sem
+  root, healthcheck em `/login`); no Compose é o serviço `web`.
+
+| Script | O que faz |
+| --- | --- |
+| `npm run dev` | Servidor de desenvolvimento |
+| `npm run build` / `npm start` | Build de produção (standalone) e execução |
+| `npm run typecheck` | Gera os tipos das rotas e roda `tsc --noEmit` |
+| `npm run lint` / `lint:check` | ESLint (com e sem `--fix`) |
+| `npm run format` / `format:check` | Prettier (com e sem escrita) |
 
 ## Prisma: client, migrations e seed
 
@@ -266,9 +452,13 @@ rodam em todo **pull request para a `main`** e em todo **push na
 | Linting | `Prettier (backend)` | `npm run format:check` |
 | Linting | `ESLint (backend)` | `npm run lint:check` |
 | Linting | `TypeScript (backend)` | `npm run typecheck` |
+| Linting | `Prettier (frontend)` | `npm run format:check` em `frontend/` |
+| Linting | `ESLint (frontend)` | `npm run lint:check` em `frontend/` |
+| Linting | `TypeScript (frontend)` | `npm run typecheck` em `frontend/` |
+| Automated Tests | `Build (frontend)` | `npm run build` em `frontend/` |
 | Linting | `Commitlint` | Mensagens dos commits da PR (ou do push) no padrão Conventional Commits |
 | Security | `Secretlint` | Segredos nos arquivos versionados |
-| Security | `npm audit` | Vulnerabilidades altas ou críticas nas dependências (raiz e backend) |
+| Security | `npm audit` | Vulnerabilidades altas ou críticas nas dependências (raiz, backend e frontend) |
 
 Todos usam a versão do Node definida em `.nvmrc` e instalam dependências
 com `npm ci` (versões exatas do `package-lock.json`). Nenhum workflow
@@ -278,7 +468,7 @@ próprio job e um envio de email falso.
 **Bloquear merge e push na `main`:** em *Settings → Rules → Rulesets →
 New branch ruleset*, com alvo na branch `main`, ative **Require a pull
 request before merging** e **Require status checks to pass**, e adicione
-os 8 checks da tabela acima. Assim nenhum push direto entra na `main`
+os 12 checks da tabela acima. Assim nenhum push direto entra na `main`
 e o merge só é liberado com todos os checks verdes. O fluxo de trabalho
 é: commitar na branch `stage`, abrir a PR `stage → main` e fazer o
 merge pelo GitHub.
@@ -298,7 +488,7 @@ npm install   # instala as ferramentas e ativa os hooks (script prepare)
 
 | Hook | O que faz |
 | --- | --- |
-| `pre-commit` | `lint-staged` nos arquivos staged: `secretlint` em todos; no backend, também `prettier --write` e `eslint --fix` nos `.ts` |
+| `pre-commit` | `lint-staged` nos arquivos staged: `secretlint` em todos; no backend e no frontend, também `prettier --write` e `eslint --fix` nos `.ts`/`.tsx` |
 | `commit-msg` | `commitlint`: recusa mensagens fora do padrão |
 
 - **Padrão de commits:** [Conventional Commits](https://www.conventionalcommits.org/)
@@ -418,7 +608,9 @@ CORS_ORIGINS=http://localhost:3000,https://portal.naporta.com.br
   `Content-Type` e `Authorization`. Cookies não são usados (o token vai no
   header), então `credentials` fica desabilitado.
 - O CORS vale apenas para navegadores; ferramentas como curl, Postman ou
-  outro backend não são afetadas.
+  outro backend não são afetadas. O portal em `frontend/` chama a API
+  pelo servidor do Next.js, então também não depende do CORS; ele
+  continua útil para clientes que chamem a API direto do navegador.
 
 ## Emails
 

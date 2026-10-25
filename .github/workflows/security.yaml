@@ -53,3 +53,7 @@ jobs:
       - name: Vulnerabilidades (backend)
         working-directory: backend
         run: npm audit --audit-level=high
+
+      - name: Vulnerabilidades (frontend)
+        working-directory: frontend
+        run: npm audit --audit-level=high

@@ -20,6 +20,7 @@ está em [`docs/PLANO_FUNDACAO.md`](docs/PLANO_FUNDACAO.md).
 - [Prisma: client, migrations e seed](#prisma-client-migrations-e-seed)
 - [Scripts](#scripts)
 - [Testes](#testes)
+- [CI e padrão de commits](#ci-e-padrão-de-commits)
 - [Swagger](#swagger)
 - [Autenticação](#autenticação)
 - [CORS](#cors)
@@ -204,7 +205,8 @@ preenchidos) e nenhum email é enviado. O seed se recusa a rodar com
 | `start:prod` | Executa o build compilado (`node dist/main`) |
 | `build` | Compila para `dist/` |
 | `lint` / `lint:check` | ESLint com correção automática / apenas verificação |
-| `format` | Prettier em `src/`, `test/` e `prisma/` |
+| `format` / `format:check` | Prettier em `src/`, `test/` e `prisma/` / apenas verificação |
+| `typecheck` | Verificação de tipos (`tsc --noEmit`) |
 | `test` | Testes unitários (`vitest run`) |
 | `test:watch` | Testes unitários em modo watch |
 | `test:cov` | Testes unitários com cobertura (`coverage/`) |
@@ -248,6 +250,72 @@ sufixo `_test` (ex.: `local_db_test`) no mesmo servidor. O banco é criado
 se não existir, recebe as migrations (`prisma migrate deploy`) e tem as
 tabelas apagadas antes de cada teste. Qualquer banco cujo nome não
 termine em `_test` é recusado. Os arquivos rodam em série.
+
+## CI e padrão de commits
+
+### GitHub Actions
+
+Os workflows ficam em `.github/workflows/` (na raiz do repositório) e
+rodam em todo **pull request para a `main`** e em todo **push na
+`main`**. Cada job é uma verificação independente:
+
+| Workflow | Job (nome do check) | O que verifica |
+| --- | --- | --- |
+| Automated Tests | `Unit Tests (backend)` | `npm test` |
+| Automated Tests | `Integration Tests (backend)` | `npm run test:integration` contra um PostgreSQL 18 descartável |
+| Linting | `Prettier (backend)` | `npm run format:check` |
+| Linting | `ESLint (backend)` | `npm run lint:check` |
+| Linting | `TypeScript (backend)` | `npm run typecheck` |
+| Linting | `Commitlint` | Mensagens dos commits da PR (ou do push) no padrão Conventional Commits |
+| Security | `Secretlint` | Segredos nos arquivos versionados |
+| Security | `npm audit` | Vulnerabilidades altas ou críticas nas dependências (raiz e backend) |
+
+Todos usam a versão do Node definida em `.nvmrc` e instalam dependências
+com `npm ci` (versões exatas do `package-lock.json`). Nenhum workflow
+precisa de segredos: os testes de integração usam um banco criado no
+próprio job e um envio de email falso.
+
+**Bloquear merge e push na `main`:** em *Settings → Rules → Rulesets →
+New branch ruleset*, com alvo na branch `main`, ative **Require a pull
+request before merging** e **Require status checks to pass**, e adicione
+os 8 checks da tabela acima. Assim nenhum push direto entra na `main`
+e o merge só é liberado com todos os checks verdes. O fluxo de trabalho
+é: commitar na branch `stage`, abrir a PR `stage → main` e fazer o
+merge pelo GitHub.
+
+Se o GitHub Actions não disparar em uma PR (instabilidade), feche e
+reabra a PR ou envie um novo commit (`git commit --amend --date=now` e
+`git push --force-with-lease` reaproveitam o último commit).
+
+### Hooks de git (Husky)
+
+As ferramentas de repositório ficam no `package.json` da **raiz**. Rode
+uma vez, na raiz, depois de clonar:
+
+```bash
+npm install   # instala as ferramentas e ativa os hooks (script prepare)
+```
+
+| Hook | O que faz |
+| --- | --- |
+| `pre-commit` | `lint-staged` nos arquivos staged: `secretlint` em todos; no backend, também `prettier --write` e `eslint --fix` nos `.ts` |
+| `commit-msg` | `commitlint`: recusa mensagens fora do padrão |
+
+- **Padrão de commits:** [Conventional Commits](https://www.conventionalcommits.org/)
+  (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`, `ci:`,
+  `build:`, `perf:`, `style:`, `revert:`), configurado em
+  `commitlint.config.mjs`. Um commit por mudança lógica.
+- `npm run commit` (na raiz) abre o assistente do Commitizen para montar
+  a mensagem escolhendo o tipo.
+- `npm run lint:secrets` (na raiz) varre todo o repositório com o
+  secretlint; `npm run lint:commits` valida o último commit.
+- **Segredos:** o secretlint (`.secretlintrc.json`) usa as regras
+  recomendadas (tokens, chaves privadas, connection strings com senha
+  etc.) e bloqueia `JWT_SECRET` ou `SMTP_PASSWORD` preenchidos em
+  arquivos versionados. Só são liberados o placeholder do `.env.example`
+  e a URL do banco local de desenvolvimento.
+- `git commit -n` pula os hooks localmente, mas o CI faz as mesmas
+  verificações e bloqueia o merge.
 
 ## Swagger
 

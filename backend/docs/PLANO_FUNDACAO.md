@@ -1044,6 +1044,21 @@ Criar seed reproduzível e idempotente com dados fictícios:
     alteradas/não utilizadas em produção.
 -   Não incluir dados pessoais reais.
 
+### 18.4 CI e hooks de git
+
+-   Workflows do GitHub Actions em `.github/workflows/` (raiz), em PR e
+    push para a `main`: testes unitários e de integração (`tests.yaml`),
+    Prettier, ESLint, TypeScript e commitlint (`linting.yaml`),
+    secretlint e `npm audit` (`security.yaml`).
+-   Os checks são exigidos por ruleset na `main`: o merge só ocorre com
+    todos verdes e não há push direto (fluxo `stage → PR → main`).
+-   Ferramentas de repositório no `package.json` da raiz: Husky
+    (`pre-commit` com lint-staged + secretlint, Prettier e ESLint;
+    `commit-msg` com commitlint), Commitizen (`npm run commit`).
+-   Commits seguem Conventional Commits, um por mudança lógica.
+-   Nenhum workflow usa segredos; o CI não depende de serviços externos
+    além do próprio GitHub.
+
 ## 19. Scripts npm
 
 Criar scripts claros e documentados, incluindo equivalentes para:

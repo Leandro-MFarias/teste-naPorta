@@ -1,0 +1,30 @@
+{
+  "name": "naporta",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Ferramentas do repositório naPorta: hooks de git, padrão de commits e detecção de segredos",
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "prepare": "husky",
+    "commit": "cz",
+    "lint:commits": "commitlint --last --verbose",
+    "lint:secrets": "secretlint \"**/*\""
+  },
+  "config": {
+    "commitizen": {
+      "path": "cz-conventional-changelog"
+    }
+  },
+  "devDependencies": {
+    "@commitlint/cli": "21.2.3",
+    "@commitlint/config-conventional": "21.2.3",
+    "@secretlint/secretlint-rule-pattern": "13.0.7",
+    "@secretlint/secretlint-rule-preset-recommend": "13.0.7",
+    "commitizen": "4.3.2",
+    "cz-conventional-changelog": "3.3.0",
+    "husky": "9.1.7",
+    "lint-staged": "17.6.0",
+    "secretlint": "13.0.7"
+  }
+}
